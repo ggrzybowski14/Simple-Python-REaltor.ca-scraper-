@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import json
 import random
 import re
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,16 +16,31 @@ from playwright.sync_api import BrowserContext, Error, Page, TimeoutError, sync_
 from playwright_stealth import Stealth
 
 
-TARGET_URL = (
+START_URL = (
     "https://www.realtor.ca/map#ZoomLevel=13&Center=48.427549%2C-123.358326"
     "&LatitudeMax=48.45459&LongitudeMax=-123.25868&LatitudeMin=48.40049"
     "&LongitudeMin=-123.45798&Sort=6-D&PGeoIds=g30_c2878bj4&GeoName=Victoria%2C%20BC"
     "&PropertyTypeGroupID=1&TransactionTypeId=2&PropertySearchTypeId=0&Currency=CAD"
 )
 RESULT_PAGES_TO_VISIT = 5
-LISTINGS_PER_PAGE = 1
+LISTINGS_TO_SCRAPE = 5
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
+TOP_FILTER_WAIT_MS = 3500
+PROPERTY_TYPE_OPTIONS = {
+    "house": {"value": "1", "label": "House"},
+    "apartment": {"value": "17", "label": "Apartment"},
+    "condo": {"value": "17", "label": "Apartment"},
+}
+
+
+@dataclass
+class SearchCriteria:
+    location: str
+    beds_min: int | None = None
+    property_type: str | None = None
+    min_price: int | None = None
+    max_price: int | None = None
 
 
 def configure_logging() -> None:
@@ -70,11 +87,11 @@ def save_failure_artifacts(page: Page, label: str) -> None:
         logging.warning("Failed to save failure artifacts: %s", artifact_error)
 
 
-def save_results(listings: list[dict[str, Any]]) -> Path:
+def save_results(payload: Any) -> Path:
     OUTPUTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = OUTPUTS_DIR / f"{timestamp}_listings.json"
-    output_path.write_text(json.dumps(listings, indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     logging.info("Saved results to %s", output_path)
     return output_path
 
@@ -120,6 +137,58 @@ def build_context(playwright) -> BrowserContext:
     return context
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Realtor.ca Playwright scraper")
+    parser.add_argument("--location", help="City or location, for example 'Victoria'")
+    parser.add_argument("--beds-min", type=int, help="Minimum number of bedrooms")
+    parser.add_argument("--property-type", help="Supported values: house, apartment, condo")
+    parser.add_argument("--min-price", type=int, help="Minimum price in whole dollars")
+    parser.add_argument("--max-price", type=int, help="Maximum price in whole dollars")
+    return parser.parse_args()
+
+
+def normalize_property_type(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower()
+    if normalized not in PROPERTY_TYPE_OPTIONS:
+        supported = ", ".join(sorted(PROPERTY_TYPE_OPTIONS))
+        raise ValueError(f"Unsupported property type '{value}'. Supported values: {supported}")
+    return normalized
+
+
+def prompt_optional_int(label: str, current: int | None = None, *, prompt_enabled: bool = True) -> int | None:
+    if current is not None:
+        return current
+    if not prompt_enabled:
+        return None
+    raw = input(f"{label} (press Enter to skip): ").strip()
+    if not raw:
+        return None
+    return int(raw.replace(",", ""))
+
+
+def collect_search_criteria(args: argparse.Namespace) -> SearchCriteria:
+    prompt_enabled = not any(getattr(args, field) is not None for field in vars(args))
+
+    location = (args.location or input("Location: ").strip()).strip()
+    if not location:
+        raise ValueError("Location is required")
+
+    property_type = args.property_type
+    if property_type is None and prompt_enabled:
+        property_type = input("Property type [house/apartment/condo] (press Enter to skip): ").strip() or None
+
+    criteria = SearchCriteria(
+        location=location,
+        beds_min=prompt_optional_int("Minimum beds", args.beds_min, prompt_enabled=prompt_enabled),
+        property_type=normalize_property_type(property_type),
+        min_price=prompt_optional_int("Minimum price", args.min_price, prompt_enabled=prompt_enabled),
+        max_price=prompt_optional_int("Maximum price", args.max_price, prompt_enabled=prompt_enabled),
+    )
+    return criteria
+
+
 def normalize_spaces(value: str | None) -> str | None:
     if not value:
         return None
@@ -133,6 +202,86 @@ def extract_numeric_feature(text: str, labels: list[str]) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def format_price_option(value: int) -> str:
+    return f"{value:,}"
+
+
+def format_beds_option(value: int) -> str:
+    return f"{value}+"
+
+
+def wait_for_listings(page: Page) -> None:
+    listing_links = page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']")
+    listing_links.first.wait_for(timeout=20000)
+
+
+def wait_for_results_refresh(page: Page, previous_url: str | None = None) -> None:
+    if previous_url:
+        try:
+            page.wait_for_function("previous => window.location.href !== previous", arg=previous_url, timeout=15000)
+        except TimeoutError:
+            logging.info("URL did not change after filter update; relying on listing wait instead")
+    human_pause(1.0, 1.8)
+    wait_for_listings(page)
+
+
+def set_select_value(page: Page, selector: str, *, value: str | None = None, label: str | None = None) -> None:
+    locator = page.locator(selector)
+    locator.select_option(value=value, label=label, force=True)
+    locator.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
+
+
+def apply_location(page: Page, location: str) -> None:
+    logging.info("Applying location filter: %s", location)
+    search_box = page.locator("input[placeholder='City, Neighbourhood, Address or MLS® number']").first
+    search_box.click()
+    human_pause(0.4, 0.9)
+    search_box.fill(location)
+    human_pause(0.8, 1.4)
+    previous_url = page.url
+    page.locator("button[aria-label='Search']").click()
+    wait_for_results_refresh(page, previous_url)
+
+
+def apply_top_select_filter(page: Page, selector: str, *, label: str) -> None:
+    previous_url = page.url
+    set_select_value(page, selector, label=label)
+    page.wait_for_timeout(TOP_FILTER_WAIT_MS)
+    wait_for_results_refresh(page, previous_url)
+
+
+def apply_property_type(page: Page, property_type: str) -> None:
+    option = PROPERTY_TYPE_OPTIONS[property_type]
+    logging.info("Applying property type filter: %s", option["label"])
+    page.locator("button:has-text('Filters')").click()
+    human_pause(1.0, 1.6)
+    previous_url = page.url
+    set_select_value(page, "#ddlBuildingType", value=option["value"])
+    human_pause(0.8, 1.4)
+    page.locator("#mapMoreFiltersSearchBtn").click()
+    page.wait_for_timeout(4000)
+    wait_for_results_refresh(page, previous_url)
+
+
+def apply_search_criteria(page: Page, criteria: SearchCriteria) -> None:
+    apply_location(page, criteria.location)
+
+    if criteria.min_price is not None:
+        logging.info("Applying minimum price filter: %s", criteria.min_price)
+        apply_top_select_filter(page, "#ddlMinPriceTop", label=format_price_option(criteria.min_price))
+
+    if criteria.max_price is not None:
+        logging.info("Applying maximum price filter: %s", criteria.max_price)
+        apply_top_select_filter(page, "#ddlMaxPriceTop", label=format_price_option(criteria.max_price))
+
+    if criteria.beds_min is not None:
+        logging.info("Applying minimum beds filter: %s+", criteria.beds_min)
+        apply_top_select_filter(page, "#ddlBedsTop", label=format_beds_option(criteria.beds_min))
+
+    if criteria.property_type is not None:
+        apply_property_type(page, criteria.property_type)
 
 
 def scrape_card(card) -> dict[str, Any] | None:
@@ -269,17 +418,21 @@ def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
     return True
 
 
-def collect_listing_summaries_across_pages(page: Page, page_limit: int, listings_per_page: int) -> list[dict[str, Any]]:
+def collect_listing_summaries_across_pages(page: Page, page_limit: int, total_limit: int) -> list[dict[str, Any]]:
     logging.info(
-        "Collecting up to %s listing(s) from each of %s results page(s)",
-        listings_per_page,
+        "Collecting up to %s listing(s) across %s results page(s)",
+        total_limit,
         page_limit,
     )
     collected: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
     for page_index in range(1, page_limit + 1):
-        page_listings = collect_listing_summaries_from_current_page(page, listings_per_page)
+        remaining = total_limit - len(collected)
+        if remaining <= 0:
+            break
+
+        page_listings = collect_listing_summaries_from_current_page(page, remaining)
         page_listings = [listing for listing in page_listings if listing["url"] not in seen_urls]
 
         if not page_listings:
@@ -297,6 +450,9 @@ def collect_listing_summaries_across_pages(page: Page, page_limit: int, listings
             page_index,
         )
 
+        if len(collected) >= total_limit:
+            break
+
         if page_index == page_limit:
             break
 
@@ -307,7 +463,7 @@ def collect_listing_summaries_across_pages(page: Page, page_limit: int, listings
     return collected
 
 
-def scrape_listings() -> list[dict[str, Any]]:
+def scrape_listings(criteria: SearchCriteria) -> list[dict[str, Any]]:
     with sync_playwright() as playwright:
         context = build_context(playwright)
         logging.info("Applying playwright-stealth")
@@ -315,8 +471,8 @@ def scrape_listings() -> list[dict[str, Any]]:
         page = context.new_page()
 
         try:
-            logging.info("Opening target URL")
-            page.goto(TARGET_URL, wait_until="domcontentloaded")
+            logging.info("Opening start URL")
+            page.goto(START_URL, wait_until="domcontentloaded")
             human_pause(2.0, 3.2)
 
             dismiss_popups_if_present(page)
@@ -324,17 +480,18 @@ def scrape_listings() -> list[dict[str, Any]]:
             page.mouse.wheel(0, random.randint(250, 700))
             human_pause(1.0, 1.8)
 
-            logging.info("Waiting for listing links to appear")
-            listing_links = page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']")
-            listing_links.first.wait_for(timeout=15000)
+            apply_search_criteria(page, criteria)
 
-            count = listing_links.count()
-            logging.info("Found %s listing links", count)
+            logging.info("Waiting for listing links to appear")
+            wait_for_listings(page)
+
+            count = page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").count()
+            logging.info("Found %s listing links after applying filters", count)
 
             listings = collect_listing_summaries_across_pages(
                 page,
                 page_limit=RESULT_PAGES_TO_VISIT,
-                listings_per_page=LISTINGS_PER_PAGE,
+                total_limit=LISTINGS_TO_SCRAPE,
             )
 
             if not listings:
@@ -381,13 +538,32 @@ def print_listings(listings: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     configure_logging()
-    logging.info("Starting Realtor.ca proof-of-concept scraper")
+    logging.info("Starting Realtor.ca input-driven scraper")
     try:
-        listings = scrape_listings()
-        output_path = save_results(listings)
+        criteria = collect_search_criteria(parse_args())
+        listings = scrape_listings(criteria)
+        output_path = save_results(
+            {
+                "search_criteria": {
+                    "location": criteria.location,
+                    "beds_min": criteria.beds_min,
+                    "property_type": criteria.property_type,
+                    "min_price": criteria.min_price,
+                    "max_price": criteria.max_price,
+                },
+                "listing_count": len(listings),
+                "listings": listings,
+            }
+        )
         logging.info("Scrape completed successfully")
         print(f"\nSaved JSON: {output_path}")
         print_listings(listings)
+        return 0
+    except ValueError as error:
+        logging.error("%s", error)
+        return 1
+    except KeyboardInterrupt:
+        logging.error("Scrape cancelled by user")
         return 0
     except Exception:
         logging.error("Scrape finished with errors")

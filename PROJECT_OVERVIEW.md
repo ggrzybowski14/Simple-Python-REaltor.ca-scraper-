@@ -80,3 +80,29 @@ In practical terms, that means the workflow is expected to become:
 ## Status
 
 Right now, this repository should be understood as a foundation project. The current code proves out scraping mechanics and basic field extraction. User-configurable search filters, broader data coverage, and investment analysis are planned next-stage capabilities rather than completed features.
+
+## Next Steps
+
+### Phase 2: Broader Collection
+
+After the input-driven search flow is validated, the next step is to expand from a small proof-of-concept sample to broader collection of matching listings.
+
+The goals for this phase are to:
+
+- Collect all or nearly all listings that match the provided search inputs.
+- Improve pagination handling so the scraper can move through result pages more efficiently.
+- Separate result-card collection from slower detail-page enrichment, so the scraper can gather candidate listings first and enrich them second.
+- Improve deduplication and run controls so larger scrapes remain stable.
+- Preserve a browser-first approach with conservative behavior to avoid unnecessary blocking risk.
+
+### Phase 3: Rich Detail Extraction
+
+Once broader collection is stable, the next step is to deepen the data extracted from each individual listing page.
+
+The goals for this phase are to:
+
+- Capture listing description text.
+- Capture structured property summary fields such as property type, building type, square footage, land size, built year, taxes, and time on REALTOR.ca.
+- Capture deeper building and land details such as heating, cooling, parking, architectural style, zoning, access, features, and other structured sections visible on the listing page.
+- Normalize those detail fields into a consistent JSON shape suitable for later storage and analysis.
+- Prepare the data structure so it can later be moved from JSON files into Supabase tables for persistence and downstream application use.
