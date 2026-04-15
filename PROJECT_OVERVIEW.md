@@ -79,12 +79,13 @@ In practical terms, that means the workflow is expected to become:
 
 ## Status
 
-This repository now has two validated stages in place:
+This repository now has an integrated scraper flow in place:
 
 - Phase 1 is complete: the scraper accepts user-provided runtime inputs for location, minimum beds, property type, and price bounds instead of relying on a single hard-coded search URL.
 - Phase 2 is complete: the scraper can broaden collection across multiple results pages, collect larger sets of listing summaries, and enrich a controlled subset of those listings with detail-page data using conservative low-risk concurrency.
+- Phase 3 detail extraction is now integrated into the same script: enriched listings can include full description text, property type, building type, square footage, land size, built year, annual taxes, HOA/strata-style fees when present, time on Realtor.ca, and zoning type.
 
-The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is richer listing-detail extraction and downstream data modeling for later storage and analysis.
+The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is downstream data modeling and storage integration, starting with Supabase.
 
 ## Next Steps
 
@@ -105,20 +106,40 @@ Location-based searches may still need better calibration of the resulting map s
 
 ### Phase 3: Rich Detail Extraction
 
-Phase 3 is the next active scope.
+Phase 3 detail extraction is now integrated into the main script.
 
-The goals for this phase are to:
+What is now in place:
 
 - Capture listing description text from the listing page.
-- Capture richer structured property summary fields such as property type, building type, square footage, land size, built year, taxes, and time on REALTOR.ca.
-- Capture deeper building and land details such as heating, cooling, parking, architectural style, zoning, access, features, and other visible structured sections.
+- Capture richer structured property summary fields such as property type, building type, square footage, land size, built year, taxes, time on REALTOR.ca, and zoning type.
 - Preserve the current summary-plus-detail output flow while expanding the detail schema.
 - Normalize those fields into a cleaner JSON structure suitable for later loading into Supabase.
 
-Recommended implementation direction for phase 3:
+Current validated enriched fields:
 
-- Keep the current browser-first search and pagination flow unchanged.
-- Expand detail extraction only after a listing has already been selected for enrichment.
-- Add detail fields incrementally and verify them section by section against the live listing page.
-- Prefer explicit field names in the output schema over storing large unstructured text blobs only.
-- Keep failure artifacts and logging strong, because detail-page extraction is where selector drift is most likely to happen.
+- `listing_description`
+- `property_type`
+- `building_type`
+- `square_feet`
+- `land_size`
+- `built_in`
+- `annual_taxes`
+- `hoa_fees`
+- `time_on_realtor`
+- `zoning_type`
+
+Current known limitation:
+
+- Some detail fields will still be absent on listings where Realtor.ca does not display them, which is expected and should continue to be treated as normal sparse data rather than as scrape failure.
+
+### Next Active Scope: Supabase Integration
+
+The next active scope is to persist the integrated scraper output into Supabase.
+
+Recommended implementation direction:
+
+- Keep the current browser-first search, pagination, and detail enrichment flow unchanged.
+- Define a stable Supabase table schema that mirrors the current integrated JSON output.
+- Normalize field names and nullability in code before inserts are introduced.
+- Add a write layer after successful scraping rather than mixing database concerns into the page-extraction logic.
+- Preserve the current JSON file output and failure artifacts as a parallel debugging trail while database storage is added.

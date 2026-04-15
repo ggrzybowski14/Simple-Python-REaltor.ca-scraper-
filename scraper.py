@@ -226,6 +226,22 @@ def normalize_spaces(value: str | None) -> str | None:
     return compact or None
 
 
+def normalize_multiline_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    lines = [re.sub(r"\s+", " ", line).strip() for line in value.replace("\r", "").splitlines()]
+    non_empty_lines = [line for line in lines if line]
+    if not non_empty_lines:
+        return None
+    return "\n".join(non_empty_lines)
+
+
+def normalize_numeric_text(value: str | None) -> str | None:
+    if not value:
+        return None
+    return normalize_spaces(value.replace(",", ""))
+
+
 def extract_numeric_feature(text: str, labels: list[str]) -> int | None:
     for label in labels:
         match = re.search(rf"(\d+)\s*{label}\b", text, re.I)
@@ -419,7 +435,8 @@ async def scrape_card(card) -> dict[str, Any] | None:
 async def extract_labeled_value(page: Page, label: str) -> str | None:
     try:
         locator = page.locator(f"text=/{re.escape(label)}/i").first
-        await locator.wait_for(timeout=5000)
+        if await locator.count() == 0:
+            return None
         container = locator.locator("xpath=ancestor::*[self::div or self::section][1]")
         container_text = await container.text_content()
         if container_text:
@@ -430,6 +447,185 @@ async def extract_labeled_value(page: Page, label: str) -> str | None:
     except Exception:
         return None
     return None
+
+
+def extract_labeled_value_from_text(text: str, labels: list[str]) -> str | None:
+    lines = [normalize_spaces(line) for line in text.replace("\r", "").splitlines()]
+    normalized_lines = [line for line in lines if line]
+
+    for label in labels:
+        label_pattern = re.compile(rf"^{re.escape(label)}\s*:?\s*(.+)$", re.I)
+        for index, line in enumerate(normalized_lines):
+            match = label_pattern.match(line)
+            if match and match.group(1):
+                return match.group(1).strip()
+            if line.lower() == label.lower() and index + 1 < len(normalized_lines):
+                next_line = normalized_lines[index + 1]
+                if next_line and next_line.lower() != label.lower():
+                    return next_line
+
+    compact_text = normalize_spaces(text) or ""
+    for label in labels:
+        match = re.search(
+            rf"{re.escape(label)}\s*:?\s*(.+?)(?=\s+[A-Z][A-Za-z/&() .'-]{{2,40}}\s*:|\s+$)",
+            compact_text,
+            re.I,
+        )
+        if match:
+            return normalize_spaces(match.group(1))
+    return None
+
+
+async def extract_description(page: Page, detail_text: str) -> str | None:
+    selectors = [
+        "[data-testid='listing-description']",
+        "section:has-text('Description')",
+        "div:has(> h2:text-matches('Description', 'i'))",
+        "div:has(> h3:text-matches('Description', 'i'))",
+    ]
+    for selector in selectors:
+        locator = page.locator(selector).first
+        try:
+            if await locator.count():
+                text = normalize_multiline_text(await locator.inner_text())
+                if text:
+                    lines = text.splitlines()
+                    if lines and lines[0].strip().lower() in {"description", "listing description"}:
+                        text = "\n".join(lines[1:]).strip()
+                    if text:
+                        return text
+        except Exception:
+            continue
+
+    lines = [line.strip() for line in detail_text.replace("\r", "").splitlines() if line.strip()]
+    start_index = None
+    stop_labels = {
+        "property summary",
+        "building features",
+        "building",
+        "land",
+        "rooms",
+        "utilities",
+        "parking",
+        "features",
+        "listing brokerage",
+        "open house",
+        "property information",
+    }
+
+    for index, line in enumerate(lines):
+        if line.lower() == "description":
+            start_index = index + 1
+            break
+
+    if start_index is None:
+        return None
+
+    collected: list[str] = []
+    for line in lines[start_index:]:
+        if line.lower() in stop_labels:
+            break
+        collected.append(line)
+
+    return normalize_multiline_text("\n".join(collected))
+
+
+async def extract_json_ld(page: Page) -> dict[str, Any]:
+    scripts = page.locator("script[type='application/ld+json']")
+    payload: dict[str, Any] = {}
+    count = await scripts.count()
+    for index in range(count):
+        try:
+            raw = await scripts.nth(index).text_content()
+            if not raw:
+                continue
+            data = json.loads(raw)
+        except Exception:
+            continue
+
+        candidates = data if isinstance(data, list) else [data]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("@type") in {"House", "SingleFamilyResidence", "Apartment", "Residence"}:
+                payload.update(candidate)
+            elif "address" in candidate or "description" in candidate:
+                payload.update(candidate)
+    return payload
+
+
+def clean_zoning(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = re.sub(r"^Description\s+", "", value, flags=re.I)
+    cleaned = re.sub(r"^Type\s+", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^Zoning\s+Type\s+", "", cleaned, flags=re.I)
+    return normalize_spaces(cleaned)
+
+
+def clean_square_feet(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = normalize_spaces(value) or ""
+    match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*(square feet|sq\.?\s*ft\.?|sqft)", compact, re.I)
+    if match:
+        amount = match.group(1).replace(",", "")
+        return f"{amount} sqft"
+    return compact or None
+
+
+def clean_land_size(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = normalize_spaces(value) or ""
+    match = re.search(r"(\d[\d,]*(?:\.\d+)?)\s*(square feet|sq\.?\s*ft\.?|sqft)", compact, re.I)
+    if match:
+        amount = match.group(1).replace(",", "")
+        return f"{amount} sqft"
+    return compact or None
+
+
+def clean_built_in(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"\b(\d{4})\b", value)
+    if match:
+        return match.group(1)
+    return normalize_spaces(value)
+
+
+def clean_money_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = normalize_spaces(value) or ""
+    if compact.lower() in {"none", "n/a", "na", "not applicable"}:
+        return None
+    match = re.search(r"\$\s*[\d,]+(?:\.\d{2})?", compact)
+    if match:
+        return match.group(0).replace(" ", "")
+    return compact or None
+
+
+def clean_optional_fee(value: str | None) -> str | None:
+    cleaned = clean_money_value(value)
+    if not cleaned:
+        return None
+    if re.search(r"\b(no|none|n/?a|not applicable|included)\b", value or "", re.I):
+        return None
+    return cleaned
+
+
+def clean_time_on_realtor(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = normalize_spaces(value) or ""
+    match = re.search(r"(\d+)\s+(hour|hours|day|days)", compact, re.I)
+    if match:
+        quantity = int(match.group(1))
+        base_unit = "hour" if "hour" in match.group(2).lower() else "day"
+        unit = base_unit if quantity == 1 else f"{base_unit}s"
+        return f"{quantity} {unit}"
+    return compact or None
 
 
 async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -> dict[str, Any]:
@@ -448,22 +644,85 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
         )
         logging.info("Detail page loaded for %s", listing["url"])
 
-        detail_text = normalize_spaces(await detail_page.locator("body").text_content()) or ""
-        land_size = await extract_labeled_value(detail_page, "Land Size")
-        built_in = await extract_labeled_value(detail_page, "Built in")
+        detail_text = await detail_page.locator("body").inner_text()
+        compact_detail_text = normalize_spaces(detail_text) or ""
+        json_ld = await extract_json_ld(detail_page)
+
+        description = await extract_description(detail_page, detail_text)
+        property_type = (
+            await extract_labeled_value(detail_page, "Property Type")
+            or extract_labeled_value_from_text(detail_text, ["Property Type"])
+            or normalize_spaces(json_ld.get("@type") if isinstance(json_ld.get("@type"), str) else None)
+        )
+        building_type = (
+            await extract_labeled_value(detail_page, "Building Type")
+            or extract_labeled_value_from_text(detail_text, ["Building Type"])
+        )
+        square_feet = (
+            await extract_labeled_value(detail_page, "Size Interior")
+            or await extract_labeled_value(detail_page, "Floor Space")
+            or extract_labeled_value_from_text(detail_text, ["Size Interior", "Floor Space", "Total Finished Area"])
+        )
+        land_size = (
+            await extract_labeled_value(detail_page, "Land Size")
+            or extract_labeled_value_from_text(detail_text, ["Land Size", "Lot Size"])
+        )
+        built_in = (
+            await extract_labeled_value(detail_page, "Built in")
+            or await extract_labeled_value(detail_page, "Year Built")
+            or extract_labeled_value_from_text(detail_text, ["Built in", "Year Built"])
+        )
+        annual_taxes = (
+            await extract_labeled_value(detail_page, "Annual Property Taxes")
+            or await extract_labeled_value(detail_page, "Annual Taxes")
+            or await extract_labeled_value(detail_page, "Taxes")
+            or extract_labeled_value_from_text(detail_text, ["Annual Property Taxes", "Annual Taxes", "Taxes"])
+        )
+        hoa_fees = (
+            await extract_labeled_value(detail_page, "Maintenance Fees")
+            or await extract_labeled_value(detail_page, "Condo Fees")
+            or await extract_labeled_value(detail_page, "Strata Fee")
+            or await extract_labeled_value(detail_page, "HOA Fees")
+            or extract_labeled_value_from_text(
+                detail_text,
+                ["Maintenance Fees", "Condo Fees", "Strata Fee", "Strata Fees", "HOA Fees"],
+            )
+        )
+        time_on_realtor = (
+            await extract_labeled_value(detail_page, "Time on REALTOR.ca")
+            or extract_labeled_value_from_text(detail_text, ["Time on REALTOR.ca"])
+        )
+        zoning = clean_zoning(
+            await extract_labeled_value(detail_page, "Zoning")
+            or await extract_labeled_value(detail_page, "Zoning Description")
+            or extract_labeled_value_from_text(detail_text, ["Zoning"])
+            or extract_labeled_value_from_text(detail_text, ["Zoning Description"])
+        )
 
         if not land_size:
-            match = re.search(r"Land Size\s+(.+?)(?=\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s|$)", detail_text)
+            match = re.search(r"Land Size\s+(.+?)(?=\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s|$)", compact_detail_text)
             if match:
                 land_size = normalize_spaces(match.group(1))
         if not built_in:
-            match = re.search(r"Built in\s+(\d{4})", detail_text, re.I)
+            match = re.search(r"(?:Built in|Year Built)\s+(\d{4})", compact_detail_text, re.I)
             if match:
                 built_in = match.group(1)
+        if not square_feet:
+            match = re.search(r"(\d[\d,]*)\s*(sq\.?\s*ft\.?|sqft|square feet)", compact_detail_text, re.I)
+            if match:
+                square_feet = normalize_spaces(match.group(0))
 
         merged = dict(listing)
-        merged["land_size"] = land_size
-        merged["built_in"] = built_in
+        merged["listing_description"] = description or normalize_spaces(json_ld.get("description"))
+        merged["property_type"] = property_type
+        merged["building_type"] = building_type
+        merged["square_feet"] = clean_square_feet(square_feet)
+        merged["land_size"] = clean_land_size(land_size)
+        merged["built_in"] = clean_built_in(built_in)
+        merged["annual_taxes"] = clean_money_value(annual_taxes)
+        merged["hoa_fees"] = clean_optional_fee(hoa_fees)
+        merged["time_on_realtor"] = clean_time_on_realtor(time_on_realtor)
+        merged["zoning_type"] = zoning
         return merged
     except Exception as error:
         logging.error("Detail scrape failed for %s: %s", listing["url"], error)
