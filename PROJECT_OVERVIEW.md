@@ -79,30 +79,46 @@ In practical terms, that means the workflow is expected to become:
 
 ## Status
 
-Right now, this repository should be understood as a foundation project. The current code proves out scraping mechanics and basic field extraction. User-configurable search filters, broader data coverage, and investment analysis are planned next-stage capabilities rather than completed features.
+This repository now has two validated stages in place:
+
+- Phase 1 is complete: the scraper accepts user-provided runtime inputs for location, minimum beds, property type, and price bounds instead of relying on a single hard-coded search URL.
+- Phase 2 is complete: the scraper can broaden collection across multiple results pages, collect larger sets of listing summaries, and enrich a controlled subset of those listings with detail-page data using conservative low-risk concurrency.
+
+The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is richer listing-detail extraction and downstream data modeling for later storage and analysis.
 
 ## Next Steps
 
 ### Phase 2: Broader Collection
 
-After the input-driven search flow is validated, the next step is to expand from a small proof-of-concept sample to broader collection of matching listings.
+Phase 2 is complete.
 
-The goals for this phase are to:
+What was validated in this phase:
 
-- Collect all or nearly all listings that match the provided search inputs.
-- Improve pagination handling so the scraper can move through result pages more efficiently.
-- Separate result-card collection from slower detail-page enrichment, so the scraper can gather candidate listings first and enrich them second.
-- Improve deduplication and run controls so larger scrapes remain stable.
-- Preserve a browser-first approach with conservative behavior to avoid unnecessary blocking risk.
+- The scraper can collect broader result sets across multiple results pages instead of stopping at a tiny proof-of-concept sample.
+- The scraper can use runtime controls for `max-pages`, `max-listings`, `detail-limit`, and `detail-concurrency`.
+- The scraper can separate summary collection from detail enrichment.
+- The scraper can enrich detail pages with conservative concurrency, starting at `detail-concurrency=2`.
+- The browser-first approach with visible Chromium and `playwright-stealth` remained stable during broader collection tests.
+
+Known note from phase 2:
+Location-based searches may still need better calibration of the resulting map state, including zoom level and geographic bounds. Different zoom and bounds combinations on Realtor.ca can produce different visible result totals even when the location name and filters are otherwise the same. This should be revisited later as a search-state tuning task, but it is not a blocker for moving into richer detail extraction.
 
 ### Phase 3: Rich Detail Extraction
 
-Once broader collection is stable, the next step is to deepen the data extracted from each individual listing page.
+Phase 3 is the next active scope.
 
 The goals for this phase are to:
 
-- Capture listing description text.
-- Capture structured property summary fields such as property type, building type, square footage, land size, built year, taxes, and time on REALTOR.ca.
-- Capture deeper building and land details such as heating, cooling, parking, architectural style, zoning, access, features, and other structured sections visible on the listing page.
-- Normalize those detail fields into a consistent JSON shape suitable for later storage and analysis.
-- Prepare the data structure so it can later be moved from JSON files into Supabase tables for persistence and downstream application use.
+- Capture listing description text from the listing page.
+- Capture richer structured property summary fields such as property type, building type, square footage, land size, built year, taxes, and time on REALTOR.ca.
+- Capture deeper building and land details such as heating, cooling, parking, architectural style, zoning, access, features, and other visible structured sections.
+- Preserve the current summary-plus-detail output flow while expanding the detail schema.
+- Normalize those fields into a cleaner JSON structure suitable for later loading into Supabase.
+
+Recommended implementation direction for phase 3:
+
+- Keep the current browser-first search and pagination flow unchanged.
+- Expand detail extraction only after a listing has already been selected for enrichment.
+- Add detail fields incrementally and verify them section by section against the live listing page.
+- Prefer explicit field names in the output schema over storing large unstructured text blobs only.
+- Keep failure artifacts and logging strong, because detail-page extraction is where selector drift is most likely to happen.
