@@ -143,3 +143,10 @@ Recommended implementation direction:
 - Normalize field names and nullability in code before inserts are introduced.
 - Add a write layer after successful scraping rather than mixing database concerns into the page-extraction logic.
 - Preserve the current JSON file output and failure artifacts as a parallel debugging trail while database storage is added.
+
+Current implementation status:
+
+- The main script now supports an optional Supabase upsert path behind `--save-to-supabase`.
+- Environment-based configuration is expected through `SUPABASE_URL`, `SUPABASE_KEY`, and optional `SUPABASE_TABLE`.
+- A starter table definition exists in [supabase/schema.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/schema.sql:1).
+- Local JSON output remains in place even when Supabase writes are enabled.

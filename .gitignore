@@ -1,5 +1,11 @@
 .venv/
 .pycache/
 __pycache__/
+.env
+.env.local
+.env.*
+.env*
+!.env.example
+.env. local
 artifacts/
 outputs/

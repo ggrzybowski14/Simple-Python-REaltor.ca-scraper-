@@ -27,6 +27,7 @@ Current state:
 - Prints a few fields to the terminal
 - Saves a screenshot and HTML snapshot on failure
 - Saves JSON output that includes the search criteria used for the run
+- Can optionally upsert listings into Supabase after a successful scrape
 
 ## Setup
 
@@ -62,6 +63,36 @@ python scraper.py \
   --detail-limit 10 \
   --detail-concurrency 2
 ```
+
+## Supabase
+
+Supabase writes are optional and are handled by the same `scraper.py` script.
+
+Setup:
+
+1. Create the table in Supabase with [supabase/schema.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/schema.sql:1).
+2. Copy `.env.example` to `.env` and fill in:
+   - `SUPABASE_URL`
+   - `SUPABASE_KEY`
+   - `SUPABASE_TABLE` if you want a table name other than `realtor_listings`
+3. Run the scraper with `--save-to-supabase`.
+
+Example:
+
+```bash
+python scraper.py \
+  --location Victoria \
+  --beds-min 2 \
+  --property-type house \
+  --max-price 1000000 \
+  --max-pages 1 \
+  --max-listings 2 \
+  --detail-limit 2 \
+  --detail-concurrency 1 \
+  --save-to-supabase
+```
+
+The script still saves local JSON output even when Supabase writes are enabled.
 
 ## Current Integrated Flow
 
@@ -101,9 +132,9 @@ The next build step is Supabase integration.
 
 That should focus on:
 
-- defining the target table/schema for the current JSON output
-- mapping the integrated scraper output into a stable insert payload
-- preserving the current file output and failure artifacts while database writes are introduced
+- validating the live insert path against a real Supabase project
+- deciding whether a separate `scrape_runs` table is needed in addition to `realtor_listings`
+- preserving the current file output and failure artifacts alongside database writes
 
 ## Logs and failure artifacts
 

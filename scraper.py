@@ -4,9 +4,11 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 import sys
+from urllib import error, parse, request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +28,7 @@ DEFAULT_MAX_PAGES = 10
 DEFAULT_MAX_LISTINGS = 100
 DEFAULT_DETAIL_LIMIT = 25
 DEFAULT_DETAIL_CONCURRENCY = 2
+DEFAULT_SUPABASE_TABLE = "realtor_listings"
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
 TOP_FILTER_WAIT_MS = 3500
@@ -51,6 +54,13 @@ class ScrapeLimits:
     max_listings: int = DEFAULT_MAX_LISTINGS
     detail_limit: int = DEFAULT_DETAIL_LIMIT
     detail_concurrency: int = DEFAULT_DETAIL_CONCURRENCY
+
+
+@dataclass
+class SupabaseConfig:
+    url: str
+    key: str
+    table: str = DEFAULT_SUPABASE_TABLE
 
 
 def configure_logging() -> None:
@@ -106,6 +116,25 @@ def save_results(payload: Any) -> Path:
     return output_path
 
 
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def load_dotenv() -> None:
+    for path in (Path(".env"), Path(".env.local")):
+        load_env_file(path)
+
+
 async def dismiss_popups_if_present(page: Page) -> None:
     patterns = [
         "Accept",
@@ -158,6 +187,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-listings", type=int, default=DEFAULT_MAX_LISTINGS)
     parser.add_argument("--detail-limit", type=int, default=DEFAULT_DETAIL_LIMIT)
     parser.add_argument("--detail-concurrency", type=int, default=DEFAULT_DETAIL_CONCURRENCY)
+    parser.add_argument("--save-to-supabase", action="store_true", help="Upsert scraped listings into Supabase")
+    parser.add_argument("--no-supabase", action="store_true", help="Disable Supabase writes even if env vars are present")
+    parser.add_argument("--supabase-table", help=f"Supabase table name. Defaults to {DEFAULT_SUPABASE_TABLE}")
     return parser.parse_args()
 
 
@@ -628,6 +660,119 @@ def clean_time_on_realtor(value: str | None) -> str | None:
     return compact or None
 
 
+def get_supabase_config(args: argparse.Namespace) -> SupabaseConfig | None:
+    if args.no_supabase:
+        return None
+
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
+    table = args.supabase_table or os.getenv("SUPABASE_TABLE") or DEFAULT_SUPABASE_TABLE
+
+    if not url and not key and not args.save_to_supabase:
+        return None
+    if not url:
+        raise ValueError("SUPABASE_URL is required when Supabase upload is enabled")
+    if not key:
+        raise ValueError("SUPABASE_KEY is required when Supabase upload is enabled")
+
+    return SupabaseConfig(url=url.rstrip("/"), key=key, table=table)
+
+
+def build_run_payload(
+    criteria: SearchCriteria,
+    limits: ScrapeLimits,
+    scrape_result: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "search_criteria": {
+            "location": criteria.location,
+            "beds_min": criteria.beds_min,
+            "property_type": criteria.property_type,
+            "min_price": criteria.min_price,
+            "max_price": criteria.max_price,
+        },
+        "scrape_limits": {
+            "max_pages": limits.max_pages,
+            "max_listings": limits.max_listings,
+            "detail_limit": limits.detail_limit,
+            "detail_concurrency": limits.detail_concurrency,
+        },
+        "summary_count": scrape_result["summary_count"],
+        "detail_attempted": scrape_result["detail_attempted"],
+        "detail_succeeded": scrape_result["detail_succeeded"],
+        "failed_detail_urls": scrape_result["failed_detail_urls"],
+        "listing_count": len(scrape_result["listings"]),
+        "listing_summaries": scrape_result["listing_summaries"],
+        "listings": scrape_result["listings"],
+    }
+
+
+def serialize_listing_for_supabase(
+    listing: dict[str, Any],
+    payload: dict[str, Any],
+    scraped_at: str,
+) -> dict[str, Any]:
+    return {
+        "url": listing["url"],
+        "address": listing.get("address"),
+        "price": listing.get("price"),
+        "bedrooms": listing.get("bedrooms"),
+        "bathrooms": listing.get("bathrooms"),
+        "results_page": listing.get("results_page"),
+        "listing_description": listing.get("listing_description"),
+        "property_type": listing.get("property_type"),
+        "building_type": listing.get("building_type"),
+        "square_feet": listing.get("square_feet"),
+        "land_size": listing.get("land_size"),
+        "built_in": listing.get("built_in"),
+        "annual_taxes": listing.get("annual_taxes"),
+        "hoa_fees": listing.get("hoa_fees"),
+        "time_on_realtor": listing.get("time_on_realtor"),
+        "zoning_type": listing.get("zoning_type"),
+        "search_criteria": payload["search_criteria"],
+        "scrape_limits": payload["scrape_limits"],
+        "raw_listing": listing,
+        "last_scraped_at": scraped_at,
+    }
+
+
+def save_to_supabase(config: SupabaseConfig, payload: dict[str, Any]) -> int:
+    scraped_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    rows = [
+        serialize_listing_for_supabase(listing, payload, scraped_at)
+        for listing in payload["listings"]
+    ]
+    if not rows:
+        logging.info("No listings to save to Supabase")
+        return 0
+
+    endpoint = f"{config.url}/rest/v1/{config.table}?on_conflict=url"
+    body = json.dumps(rows).encode("utf-8")
+    req = request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "apikey": config.key,
+            "Authorization": f"Bearer {config.key}",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"Supabase write failed with status {response.status}")
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Supabase write failed with status {exc.code}: {details}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Supabase write failed: {exc.reason}") from exc
+
+    logging.info("Saved %s listing(s) to Supabase table %s", len(rows), config.table)
+    return len(rows)
+
+
 async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -> dict[str, Any]:
     detail_page = await context.new_page()
     try:
@@ -962,34 +1107,16 @@ async def async_main() -> int:
     configure_logging()
     logging.info("Starting Realtor.ca input-driven scraper")
     try:
+        load_dotenv()
         args = parse_args()
         criteria = collect_search_criteria(args)
         limits = collect_scrape_limits(args)
+        supabase_config = get_supabase_config(args)
         scrape_result = await scrape_listings(criteria, limits)
-        output_path = save_results(
-            {
-                "search_criteria": {
-                    "location": criteria.location,
-                    "beds_min": criteria.beds_min,
-                    "property_type": criteria.property_type,
-                    "min_price": criteria.min_price,
-                    "max_price": criteria.max_price,
-                },
-                "scrape_limits": {
-                    "max_pages": limits.max_pages,
-                    "max_listings": limits.max_listings,
-                    "detail_limit": limits.detail_limit,
-                    "detail_concurrency": limits.detail_concurrency,
-                },
-                "summary_count": scrape_result["summary_count"],
-                "detail_attempted": scrape_result["detail_attempted"],
-                "detail_succeeded": scrape_result["detail_succeeded"],
-                "failed_detail_urls": scrape_result["failed_detail_urls"],
-                "listing_count": len(scrape_result["listings"]),
-                "listing_summaries": scrape_result["listing_summaries"],
-                "listings": scrape_result["listings"],
-            }
-        )
+        payload = build_run_payload(criteria, limits, scrape_result)
+        output_path = save_results(payload)
+        if supabase_config is not None:
+            save_to_supabase(supabase_config, payload)
         logging.info("Scrape completed successfully")
         print(f"\nSaved JSON: {output_path}")
         print_listings(scrape_result["listings"])
@@ -1000,8 +1127,8 @@ async def async_main() -> int:
     except KeyboardInterrupt:
         logging.error("Scrape cancelled by user")
         return 0
-    except Exception:
-        logging.error("Scrape finished with errors")
+    except Exception as error:
+        logging.error("Scrape finished with errors: %s", error)
         return 1
 
 
