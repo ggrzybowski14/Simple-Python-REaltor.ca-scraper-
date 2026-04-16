@@ -2,122 +2,235 @@
 
 ## Premise
 
-This repository is an early proof-of-concept for a `realtor.ca` scraper built in Python with Playwright. Its current purpose is to answer a narrow technical question: can listing data be collected reliably from Realtor.ca search results and detail pages using a browser-driven approach that looks closer to normal user behavior than a bare scripted session.
+This repository began as a proof-of-concept for a `realtor.ca` scraper built in Python with Playwright. Its original purpose was narrow: validate that a visible browser, stealth measures, and light human-like interaction could reliably collect listing data from Realtor.ca search results and detail pages.
 
-At this stage, the codebase is intentionally limited. It is not yet a full scraper platform, a reusable search engine, or an investment decision system. It is a working validation layer for data acquisition.
+That proof of concept is now working well enough to treat the repository as the early foundation of a larger real-estate analysis application. The project is still not a finished product, but it has moved beyond pure scraping validation. The next step is to turn the scraper foundation into a reliable, structured ingestion system that can support a user-facing application.
 
-## Current Scope
+## Current State
 
-The current scraper is designed to:
+The current codebase has a single integrated scraper flow in place.
 
-- Open a visible Chromium browser session rather than running fully headless.
-- Apply `playwright-stealth` to reduce obvious browser automation signals.
-- Visit a fixed Realtor.ca search URL.
-- Move through a limited number of search result pages.
-- Extract a small set of listing summary fields from result cards.
-- Open listing detail pages and extract additional attributes.
-- Save structured JSON output for successful runs.
-- Save screenshots and HTML snapshots when failures occur, so selector and anti-bot issues can be debugged quickly.
+What works today:
 
-This makes the current repository a proof of concept for collection reliability, not yet a generalized end-user product.
+- Opens a visible Chromium browser rather than running fully headless.
+- Applies `playwright-stealth`.
+- Accepts runtime inputs for location, price bounds, minimum beds, and property type.
+- Applies those filters in the visible Realtor.ca UI.
+- Collects listing summaries across multiple result pages.
+- Enriches a configurable subset of listings with detail-page fields.
+- Saves structured JSON output locally.
+- Can upsert scraped listings into Supabase when local credentials are configured.
+- Saves screenshots and HTML artifacts on failure for debugging.
 
-## Technical Approach
+This should still be understood as a browser-first ingestion foundation, not yet a proper end-user application.
 
-The scraper was intentionally built with Playwright plus stealth and human-like interaction patterns. The goal is not to perfectly mimic a human user, but to avoid the most obvious characteristics of a naive automation script.
+## Current Technical Approach
+
+The scraper intentionally uses Playwright plus stealth and human-like interaction patterns. The goal is not to perfectly mimic human behavior, but to avoid the most obvious characteristics of a naive automation script.
 
 The current implementation includes:
 
 - A visible Chromium browser launched with automation-related blink features disabled.
-- A browser context configured with a realistic desktop viewport, `en-CA` locale, `America/Vancouver` timezone, and a standard Chrome-style user agent.
+- A browser context configured with a realistic desktop viewport, `en-CA` locale, `America/Vancouver` timezone, and a Chrome-style user agent.
 - `playwright-stealth` applied to the browser context.
-- Light mouse movement across several points in the viewport before or after page interaction.
-- Small randomized pauses between actions.
+- Light mouse movement before and after interactions.
+- Randomized pauses between actions.
 - Randomized scroll distances.
-- Occasional longer pauses while iterating listings, to reduce perfectly uniform timing.
+- Occasional longer pauses while iterating listings.
 - Popup dismissal logic for common consent or close buttons.
 
-The current timing behavior includes:
+These interaction values are part of the scraping strategy and should be treated as tunable implementation details, not product requirements.
 
-- General pauses of roughly `0.6` to `1.6` seconds for baseline interaction pacing.
-- Mouse movement pauses of roughly `0.15` to `0.45` seconds between movement points.
-- Post-navigation or post-scroll pauses commonly around `1.0` to `3.2` seconds depending on context.
-- Listing-to-listing pauses usually around `0.9` to `2.0` seconds, with occasional longer waits of roughly `2.5` to `4.5` seconds.
-- Playwright `slow_mo=140` to add a consistent delay to browser actions.
+## Product Direction
 
-These values are part of the proof-of-concept strategy and should be treated as tunable scraping behavior, not fixed product requirements.
+The broader product is meant to become a real-estate analyzer application for a single primary user at first. The near-term focus is not a public platform and not a multi-user SaaS product. The goal is to support one person's workflow for identifying and reviewing promising listings within selected Canadian markets.
 
-## Intended Direction
+The intended workflow is:
 
-The broader project is meant to grow from a scraper proof of concept into the data-ingestion layer for a real-estate investment workflow.
+1. The user defines a saved search for a market of interest.
+2. The scraper collects all active listings that match that saved search.
+3. The system stores both the latest known listing state and scrape history.
+4. The application shows the current active listings for that saved search.
+5. A later analysis layer evaluates listings against buy-box criteria and highlights which ones deserve manual review.
 
-The planned direction is to support user-defined search inputs similar to the filters available on Realtor.ca, including examples such as:
+## Scope Clarifications
 
-- Minimum price
-- Maximum price
-- Property type, such as apartment versus house
-- Location or map bounds
-- Other relevant listing filters exposed by the source site
+### Saved Search Versus Buy Box
 
-Over time, the scraper should evolve to:
+These concepts overlap, but they are not the same thing.
 
-- Accept structured search and filtering inputs instead of relying on a single hard-coded URL.
-- Collect a richer and more consistent set of fields needed for downstream analysis.
-- Normalize listing data into a format suitable for evaluation.
-- Feed scraped listings into an analyzer that compares them against investment goals and buy-box criteria.
-- Surface listings that are potentially worth closer review.
+- A `saved search` defines what the scraper should collect from Realtor.ca.
+- A `buy box` defines how the application should evaluate the listings that were collected.
 
-## Product Vision
+Examples:
 
-The long-term goal is not just to scrape listings, but to help evaluate them against a personalized investment thesis.
+- A saved search might be: Duncan, house, 2+ beds, max price 1,000,000.
+- A buy box might later be: under 750,000, house, suite potential, and specific keywords in the listing description.
 
-In practical terms, that means the workflow is expected to become:
+The system should scrape candidate listings first, then evaluate them through buy-box logic later. Buy-box design is important, but it is not the current implementation focus.
 
-1. A user defines search constraints and buy-box parameters.
-2. The scraper collects candidate listings from Realtor.ca.
-3. An analysis layer evaluates those listings against the user's goals.
-4. The system identifies which listings appear promising enough for manual review.
+### Market Context
 
-## Status
+For now, the app is not a full market analyzer. It is primarily a listing-ingestion and listing-analysis tool scoped to one market or saved search at a time.
 
-This repository now has an integrated scraper flow in place:
+A separate future product area may analyze broader market fundamentals such as:
 
-- Phase 1 is complete: the scraper accepts user-provided runtime inputs for location, minimum beds, property type, and price bounds instead of relying on a single hard-coded search URL.
-- Phase 2 is complete: the scraper can broaden collection across multiple results pages, collect larger sets of listing summaries, and enrich a controlled subset of those listings with detail-page data using conservative low-risk concurrency.
-- Phase 3 detail extraction is now integrated into the same script: enriched listings can include full description text, property type, building type, square footage, land size, built year, annual taxes, HOA/strata-style fees when present, time on Realtor.ca, and zoning type.
+- rental rates
+- appreciation trends
+- economic indicators
+- population growth
 
-The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is downstream data modeling and storage integration, starting with Supabase.
-The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is the interface layer that sits on top of the now-integrated scraper and Supabase storage.
+That future market-analyzer concept should remain explicitly out of active implementation scope for now.
 
-## Next Steps
+### Active Listings and History
 
-### Phase 2: Broader Collection
+The product should show active listings, not stale listings that disappeared weeks ago.
 
-Phase 2 is complete.
+That means the system needs two things at once:
 
-What was validated in this phase:
+- a current view of active listings for each saved search
+- historical scrape records so the system knows when a listing was first seen, last seen, or no longer active
 
-- The scraper can collect broader result sets across multiple results pages instead of stopping at a tiny proof-of-concept sample.
-- The scraper can use runtime controls for `max-pages`, `max-listings`, `detail-limit`, and `detail-concurrency`.
-- The scraper can separate summary collection from detail enrichment.
-- The scraper can enrich detail pages with conservative concurrency, starting at `detail-concurrency=2`.
-- The browser-first approach with visible Chromium and `playwright-stealth` remained stable during broader collection tests.
+The UI should normally show deduplicated current listings. It may later also show helpful indicators such as:
 
-Known note from phase 2:
-Location-based searches may still need better calibration of the resulting map state, including zoom level and geographic bounds. Different zoom and bounds combinations on Realtor.ca can produce different visible result totals even when the location name and filters are otherwise the same. This should be revisited later as a search-state tuning task, but it is not a blocker for moving into richer detail extraction.
+- new in the last scrape
+- new in the last 24 hours
+- no longer active
 
-### Phase 3: Rich Detail Extraction
+## Current Limitations To Fix Before UI Work
 
-Phase 3 detail extraction is now integrated into the main script.
+Two important issues should be addressed before building the first local website.
 
-What is now in place:
+### 1. Search Initialization Is Still Too Anchored To A Victoria-Specific Starting State
 
-- Capture listing description text from the listing page.
-- Capture richer structured property summary fields such as property type, building type, square footage, land size, built year, taxes, time on REALTOR.ca, and zoning type.
-- Preserve the current summary-plus-detail output flow while expanding the detail schema.
-- Normalize those fields into a cleaner JSON structure suitable for later loading into Supabase.
+The current scraper still begins from a Victoria-specific Realtor.ca map URL. Even though later filters can be changed by user input, the startup state is still tied too closely to one market.
 
-Current validated enriched fields:
+The next version should:
 
+- start from a neutral Realtor.ca entry point
+- establish search state from structured user input rather than a market-specific hard-coded URL
+- apply location first, then the rest of the search filters
+- validate that the rendered search state matches the requested input
+
+### 2. The Current Supabase Model Blends Latest Listing State With Scrape History
+
+The current single-table approach is acceptable for the proof of concept, but it is not sufficient for the application phase because repeated listings overwrite prior run context.
+
+The next version should separate:
+
+- canonical listing identity
+- scrape run history
+- run-to-listing relationships
+- saved-search definitions
+
+That will allow the system to keep one canonical record per listing while also preserving which listings were seen in each scrape.
+
+## Data Model Direction
+
+The intended direction is to move toward a more explicit relational structure.
+
+Expected core entities:
+
+- `saved_searches`
+  One row per reusable search definition. This is the primary unit the user will manage in the app.
+- `scrape_runs`
+  One row per scrape execution for a saved search.
+- `listings`
+  One canonical row per unique listing.
+- `scrape_run_listings`
+  One row per listing seen in a given scrape run.
+
+This structure should support:
+
+- no duplicate canonical listing rows
+- a clean current active-listings view
+- detection of newly seen listings
+- detection of disappeared or inactive listings
+- comparison between one scrape run and another
+
+The product requirement is not to duplicate listings in the normal application view. The purpose of the additional tables is to preserve history without showing duplicates in the UI.
+
+## Phase 1 Implementation Blueprint
+
+This section defines the concrete design target for the next implementation phase.
+
+### Proposed Phase 1 Tables
+
+#### `saved_searches`
+
+Purpose:
+
+- store the reusable search definitions the user wants to run repeatedly
+
+Suggested fields:
+
+- `id`
+- `name`
+- `location`
+- `min_price`
+- `max_price`
+- `beds_min`
+- `property_type`
+- `is_active`
+- `created_at`
+- `updated_at`
+- optional later fields such as `baths_min`, `keywords_include`, or other Realtor.ca filters
+
+Notes:
+
+- for now, this is the main user-managed concept in the system
+- this should represent the scraping scope, not the buy-box logic
+
+#### `scrape_runs`
+
+Purpose:
+
+- store one row per scrape execution for a saved search
+
+Suggested fields:
+
+- `id`
+- `saved_search_id`
+- `status`
+- `started_at`
+- `finished_at`
+- `summary_count`
+- `detail_attempted`
+- `detail_succeeded`
+- `failed_detail_urls`
+- `error_message`
+- `search_snapshot`
+- `run_settings`
+- `created_at`
+
+Status examples:
+
+- `queued`
+- `running`
+- `succeeded`
+- `failed`
+
+Notes:
+
+- `search_snapshot` should preserve the exact search parameters used for that run
+- `run_settings` can preserve internal debug controls if they still exist
+
+#### `listings`
+
+Purpose:
+
+- store one canonical row per unique listing
+
+Suggested fields:
+
+- `id`
+- `source`
+- `source_listing_key`
+- `url`
+- `address`
+- `price`
+- `bedrooms`
+- `bathrooms`
 - `listing_description`
 - `property_type`
 - `building_type`
@@ -128,29 +241,254 @@ Current validated enriched fields:
 - `hoa_fees`
 - `time_on_realtor`
 - `zoning_type`
+- `raw_listing`
+- `first_seen_at`
+- `last_seen_at`
+- `last_scraped_at`
+- `is_active`
+- `created_at`
+- `updated_at`
 
-Current known limitation:
+Notes:
 
-- Some detail fields will still be absent on listings where Realtor.ca does not display them, which is expected and should continue to be treated as normal sparse data rather than as scrape failure.
+- `source_listing_key` should use a stable Realtor identifier if one can be extracted; otherwise use URL initially
+- `is_active` should reflect whether the listing is still present in the latest relevant scrape context
+- `first_seen_at` and `last_seen_at` support listing lifecycle tracking
 
-### Next Active Scope: Interface Layer
+#### `scrape_run_listings`
 
-Supabase integration is now in place. The next active scope is deciding how a user should interact with the system beyond directly running the script.
+Purpose:
 
-Current implementation status:
+- link a scrape run to every listing seen in that run
 
-- The main script can automatically upsert listings into Supabase when `.env.local` contains valid `SUPABASE_URL` and `SUPABASE_KEY` values.
-- A starter table definition exists in [supabase/schema.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/schema.sql:1).
-- Local JSON output remains in place even when Supabase writes are enabled.
-- Live validation proved the current script can scrape, save JSON locally, and upsert into Supabase successfully.
+Suggested fields:
 
-Recommended implementation direction for the interface layer:
+- `id`
+- `scrape_run_id`
+- `listing_id`
+- `saved_search_id`
+- `results_page`
+- `is_new_in_run`
+- `raw_listing_snapshot`
+- `created_at`
 
-- Keep the current browser-first search, pagination, detail enrichment, and Supabase write flow unchanged underneath.
-- Decide whether the first user-facing layer should be:
-  - a better CLI experience
-  - a small local web UI
-  - or a lightweight app that reads existing listings back from Supabase
-- Treat the interface as a thin orchestration layer over the current scraper rather than rewriting scraper logic into the UI.
-- Use Supabase as the durable source of previously scraped listings so the interface can show more than just the latest run.
-- Preserve current logging, JSON output, and failure artifacts for debugging while the interface layer is added.
+Notes:
+
+- this table preserves run history without duplicating canonical listing records
+- `is_new_in_run` can support UI labels such as "new in last scrape"
+
+### Expected Behavior Of The New Model
+
+When the same listing is seen repeatedly:
+
+- `listings` keeps one canonical row
+- `scrape_runs` records each execution
+- `scrape_run_listings` records that the listing appeared in each run
+- `listings.last_seen_at` is updated
+- `listings.is_active` remains true if it is still being seen in current runs
+
+When a listing disappears from the latest scrape for a saved search:
+
+- the listing should stop appearing in the default current active-listings view for that saved search
+- history should still remain queryable through prior runs
+- the canonical listing record should not be deleted
+
+That preserves history while keeping the UI focused on currently active inventory.
+
+### Proposed Phase 1 Scraper Request Shape
+
+The scraper should be driven by a structured request object rather than a fixed market-specific URL.
+
+Proposed core request fields:
+
+- `location`
+- `min_price`
+- `max_price`
+- `beds_min`
+- `property_type`
+
+Internal or temporary development controls may still exist separately, such as:
+
+- `detail_limit`
+- `detail_concurrency`
+- `max_pages`
+
+These controls should be treated as debugging or safety settings, not long-term user-facing product inputs.
+
+### Proposed Phase 1 Scraper Flow
+
+1. Load a neutral Realtor.ca starting page rather than a Victoria-specific map state.
+2. Apply location from the structured search request.
+3. Apply price, beds, property type, and other supported filters from the same request.
+4. Validate the rendered location and search state after filters are applied.
+5. Collect all matching listings for a normal run.
+6. Enrich listing details where appropriate.
+7. Persist:
+   - the scrape run
+   - canonical listings
+   - run-to-listing history
+8. Update active/inactive state based on the latest run results for the saved search.
+
+### Proposed Refactor Direction In Code
+
+The current integrated script should be broken into clearer responsibilities before UI work.
+
+Suggested logical modules:
+
+- `search request parsing`
+- `browser/session setup`
+- `search-state application`
+- `results collection`
+- `detail enrichment`
+- `persistence layer`
+- `run orchestration`
+
+The goal is not abstraction for its own sake. The goal is to make the scraper callable later from:
+
+- CLI validation
+- a local web app
+- scheduled local runs
+
+### Out Of Scope For Phase 1
+
+The following should not expand the Phase 1 surface area:
+
+- buy-box scoring logic
+- AI-assisted buy-box definition
+- public deployment
+- multi-user auth
+- broader market fundamentals analysis
+
+## Phase 1 Progress
+
+Phase 1 is now mostly implemented and partially validated in live headed runs.
+
+What has been completed:
+
+- neutral Realtor.ca startup using a broad default map state rather than a Victoria-specific hard-coded map URL
+- visible browser search flow that successfully applies location, price, beds, and property type from structured inputs
+- Supabase persistence into:
+  - `saved_searches`
+  - `scrape_runs`
+  - `listings`
+  - `scrape_run_listings`
+- active-listing read model via `current_active_saved_search_listings`
+- light lifecycle support via:
+  - `saved_search_listings`
+  - `is_new_in_run` on `scrape_run_listings`
+
+What has been validated:
+
+- a live headed Victoria run with `house`, `2+ beds`, and `max price 1000000`
+- successful summary collection, detail enrichment, local JSON output, and Supabase writes
+- correct creation of saved search, scrape run, canonical listing, and run-history rows
+- correct population of the current active-listings view
+
+What remains to be proven:
+
+- the explicit inactive transition when a listing disappears from a later run for the same saved-search context
+
+That inactive-path proof is considered a small follow-up, not a blocker to starting the first local website, because the active-listings view and saved-search persistence model are already working.
+
+## Phase Plan
+
+### Completed Foundation Work
+
+The following foundation work is already in place:
+
+- input-driven browser search controls
+- broader summary collection across pages
+- conservative detail enrichment
+- richer listing detail extraction
+- local JSON output
+- initial Supabase integration
+
+### Phase 1: Scraper And Data Foundation
+
+This phase is largely complete.
+
+Goals:
+
+- remove market-specific startup assumptions
+- make search truly input-driven from a structured request object
+- redesign the Supabase schema around saved searches, scrape runs, listings, and run history
+- keep the CLI available for validation and debugging
+- preserve failure artifacts and logging
+
+Phase 1 implementation direction:
+
+- Replace the fixed Victoria-oriented start state with a neutral Realtor.ca starting page.
+- Treat the search request as structured input driven by the user or a saved search.
+- Collect all matching listings for real runs rather than relying on `max-listings` and `max-pages` as product behavior.
+- Keep `max-pages` and `max-listings` only as internal debugging safeguards if they remain at all.
+- Store both the latest known state of a listing and its scrape history.
+- Ensure the system can determine whether a listing is still active in the latest run for a saved search.
+
+Current status:
+
+- completed for neutral startup, input-driven search, persistence redesign, and active-listings read model
+- partially validated for lifecycle handling
+- one remaining follow-up is to explicitly prove the inactive transition with a controlled rerun
+
+### Phase 2: Local Website
+
+Once Phase 1 is stable, build the first local user-facing application layer.
+
+Goals:
+
+- create and manage saved searches from a local web UI
+- trigger scrape jobs from the UI
+- show scrape run history and status
+- display current active listings for a saved search
+- flag listings that are newly seen since the last scrape
+
+Expected shape of the first UI:
+
+- saved searches
+- scrape runs
+- current listings
+- listing detail view
+
+The first website should be a thin orchestration and read layer on top of the scraper and Supabase foundation, not a rewrite of scraper logic.
+
+### Phase 3: Listing Analysis Layer
+
+After the local website is working, add the first analysis features.
+
+Goals:
+
+- define initial buy-box inputs
+- score or filter listings against those inputs
+- identify which listings deserve manual review first
+
+Possible future approaches:
+
+- simple structured buy-box inputs
+- later AI-assisted help to define or refine buy-box criteria
+
+The first implementation should stay simple and structured.
+
+### Phase 4: Workflow Refinement
+
+After analysis is in place, improve the review workflow.
+
+Potential features:
+
+- shortlist or reviewed status
+- notes on listings
+- candidate versus rejected classification
+- better change tracking between runs
+- better explanation of why a listing matches or misses the buy box
+
+### Future State Beyond Current Scope
+
+A separate future product area may later expand into broader market analysis.
+
+Examples:
+
+- rental market analysis
+- appreciation and trend analysis
+- macro and local economic indicators
+- population-growth context
+
+This future work should be acknowledged in project documentation, but should not become active implementation work yet.

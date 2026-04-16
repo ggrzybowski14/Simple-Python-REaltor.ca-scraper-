@@ -18,17 +18,11 @@ from playwright.async_api import BrowserContext, Error, Page, TimeoutError, asyn
 from playwright_stealth import Stealth
 
 
-START_URL = (
-    "https://www.realtor.ca/map#ZoomLevel=13&Center=48.427549%2C-123.358326"
-    "&LatitudeMax=48.45459&LongitudeMax=-123.25868&LatitudeMin=48.40049"
-    "&LongitudeMin=-123.45798&Sort=6-D&PGeoIds=g30_c2878bj4&GeoName=Victoria%2C%20BC"
-    "&PropertyTypeGroupID=1&TransactionTypeId=2&PropertySearchTypeId=0&Currency=CAD"
-)
+START_URL = "https://www.realtor.ca/map"
 DEFAULT_MAX_PAGES = 10
 DEFAULT_MAX_LISTINGS = 100
 DEFAULT_DETAIL_LIMIT = 25
 DEFAULT_DETAIL_CONCURRENCY = 2
-DEFAULT_SUPABASE_TABLE = "realtor_listings"
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
 TOP_FILTER_WAIT_MS = 3500
@@ -60,7 +54,6 @@ class ScrapeLimits:
 class SupabaseConfig:
     url: str
     key: str
-    table: str = DEFAULT_SUPABASE_TABLE
 
 
 def configure_logging() -> None:
@@ -160,7 +153,10 @@ async def build_context(playwright) -> BrowserContext:
     browser = await playwright.chromium.launch(
         headless=False,
         slow_mo=140,
-        args=["--disable-blink-features=AutomationControlled"],
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--deny-permission-prompts",
+        ],
     )
     context = await browser.new_context(
         viewport={"width": 1440, "height": 960},
@@ -189,7 +185,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detail-concurrency", type=int, default=DEFAULT_DETAIL_CONCURRENCY)
     parser.add_argument("--save-to-supabase", action="store_true", help="Upsert scraped listings into Supabase")
     parser.add_argument("--no-supabase", action="store_true", help="Disable Supabase writes even if env vars are present")
-    parser.add_argument("--supabase-table", help=f"Supabase table name. Defaults to {DEFAULT_SUPABASE_TABLE}")
     return parser.parse_args()
 
 
@@ -215,7 +210,10 @@ def prompt_optional_int(label: str, current: int | None = None, *, prompt_enable
 
 
 def collect_search_criteria(args: argparse.Namespace) -> SearchCriteria:
-    prompt_enabled = not any(getattr(args, field) is not None for field in vars(args))
+    prompt_enabled = not any(
+        value is not None
+        for value in (args.location, args.beds_min, args.property_type, args.min_price, args.max_price)
+    )
 
     location = (args.location or input("Location: ").strip()).strip()
     if not location:
@@ -387,11 +385,65 @@ async def apply_location(page: Page, location: str) -> None:
     search_box = page.locator("input[placeholder='City, Neighbourhood, Address or MLS® number']").first
     await search_box.click()
     await human_pause(0.4, 0.9)
-    await search_box.fill(location)
-    await human_pause(0.8, 1.4)
+    await search_box.fill("")
+    await search_box.type(location, delay=random.randint(70, 140))
+    await human_pause(1.0, 1.8)
+
+    auto_complete = page.locator("#AutoCompleteCon-txtMapSearchInput")
+    selected_location = False
+    try:
+        await auto_complete.wait_for(state="visible", timeout=6000)
+        suggestion_selectors = [
+            "#AutoCompleteApiLocations-txtMapSearchInput > *",
+            "#AutoCompleteSuggestionsCon-txtMapSearchInput > *",
+            "#AutoCompleteApiListings-txtMapSearchInput > *",
+        ]
+        for selector in suggestion_selectors:
+            suggestion = page.locator(selector).first
+            if await suggestion.count():
+                await suggestion.click()
+                selected_location = True
+                logging.info("Selected autocomplete suggestion using %s", selector)
+                break
+    except TimeoutError:
+        logging.info("Autocomplete suggestions did not become visible for '%s'", location)
+
+    if not selected_location:
+        logging.info("Falling back to keyboard selection for location '%s'", location)
+        await page.keyboard.press("ArrowDown")
+        await human_pause(0.3, 0.7)
+        await page.keyboard.press("Enter")
+        await human_pause(0.8, 1.4)
+
     previous_url = page.url
-    await page.locator("button[aria-label='Search']").click()
-    await wait_for_results_refresh(page, previous_url)
+    search_button = page.locator("button[aria-label='Search']").first
+    try:
+        await page.wait_for_function(
+            "() => { const button = document.querySelector('#btnMapSearch'); return !!button && !button.disabled; }",
+            timeout=8000,
+        )
+        await search_button.click()
+        await wait_for_results_refresh(page, previous_url)
+        return
+    except TimeoutError:
+        logging.info("Search button did not enable after location selection; checking for auto-applied location state")
+
+    try:
+        await page.wait_for_function(
+            """
+            requested => {
+                const pill = document.querySelector('#locationSearchFilterText');
+                const input = document.querySelector('#txtMapSearchInput');
+                const value = (pill?.textContent || input?.value || '').toLowerCase();
+                return value.includes(requested.toLowerCase());
+            }
+            """,
+            arg=location,
+            timeout=10000,
+        )
+        await wait_for_results_refresh(page, previous_url)
+    except TimeoutError as exc:
+        raise RuntimeError(f"Location selection did not activate for '{location}'") from exc
 
 
 async def apply_top_select_filter(page: Page, selector: str, *, label: str) -> None:
@@ -666,7 +718,6 @@ def get_supabase_config(args: argparse.Namespace) -> SupabaseConfig | None:
 
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_KEY")
-    table = args.supabase_table or os.getenv("SUPABASE_TABLE") or DEFAULT_SUPABASE_TABLE
 
     if not url and not key and not args.save_to_supabase:
         return None
@@ -675,28 +726,61 @@ def get_supabase_config(args: argparse.Namespace) -> SupabaseConfig | None:
     if not key:
         raise ValueError("SUPABASE_KEY is required when Supabase upload is enabled")
 
-    return SupabaseConfig(url=url.rstrip("/"), key=key, table=table)
+    return SupabaseConfig(url=url.rstrip("/"), key=key)
+
+
+def build_search_criteria_payload(criteria: SearchCriteria) -> dict[str, Any]:
+    return {
+        "location": criteria.location,
+        "beds_min": criteria.beds_min,
+        "property_type": criteria.property_type,
+        "min_price": criteria.min_price,
+        "max_price": criteria.max_price,
+    }
+
+
+def build_saved_search_key(criteria: SearchCriteria) -> str:
+    property_type = criteria.property_type or "any-property"
+    beds_min = criteria.beds_min if criteria.beds_min is not None else "any-beds"
+    min_price = criteria.min_price if criteria.min_price is not None else "any-min"
+    max_price = criteria.max_price if criteria.max_price is not None else "any-max"
+    location_slug = re.sub(r"[^a-z0-9]+", "-", criteria.location.strip().lower()).strip("-") or "unknown-location"
+    return f"{location_slug}__{property_type}__beds-{beds_min}__min-{min_price}__max-{max_price}"
+
+
+def build_saved_search_name(criteria: SearchCriteria) -> str:
+    parts = [criteria.location]
+    if criteria.property_type:
+        parts.append(criteria.property_type.title())
+    if criteria.beds_min is not None:
+        parts.append(f"{criteria.beds_min}+ beds")
+    if criteria.max_price is not None:
+        parts.append(f"under ${criteria.max_price:,}")
+    elif criteria.min_price is not None:
+        parts.append(f"from ${criteria.min_price:,}")
+    return " | ".join(parts)
 
 
 def build_run_payload(
     criteria: SearchCriteria,
     limits: ScrapeLimits,
     scrape_result: dict[str, Any],
+    *,
+    run_started_at: str,
+    run_finished_at: str,
 ) -> dict[str, Any]:
     return {
-        "search_criteria": {
-            "location": criteria.location,
-            "beds_min": criteria.beds_min,
-            "property_type": criteria.property_type,
-            "min_price": criteria.min_price,
-            "max_price": criteria.max_price,
-        },
+        "saved_search_key": build_saved_search_key(criteria),
+        "saved_search_name": build_saved_search_name(criteria),
+        "search_criteria": build_search_criteria_payload(criteria),
         "scrape_limits": {
             "max_pages": limits.max_pages,
             "max_listings": limits.max_listings,
             "detail_limit": limits.detail_limit,
             "detail_concurrency": limits.detail_concurrency,
         },
+        "run_started_at": run_started_at,
+        "run_finished_at": run_finished_at,
         "summary_count": scrape_result["summary_count"],
         "detail_attempted": scrape_result["detail_attempted"],
         "detail_succeeded": scrape_result["detail_succeeded"],
@@ -707,18 +791,15 @@ def build_run_payload(
     }
 
 
-def serialize_listing_for_supabase(
-    listing: dict[str, Any],
-    payload: dict[str, Any],
-    scraped_at: str,
-) -> dict[str, Any]:
+def serialize_listing_for_supabase(listing: dict[str, Any], scraped_at: str) -> dict[str, Any]:
     return {
+        "source": "realtor.ca",
+        "source_listing_key": listing["url"],
         "url": listing["url"],
         "address": listing.get("address"),
         "price": listing.get("price"),
         "bedrooms": listing.get("bedrooms"),
         "bathrooms": listing.get("bathrooms"),
-        "results_page": listing.get("results_page"),
         "listing_description": listing.get("listing_description"),
         "property_type": listing.get("property_type"),
         "building_type": listing.get("building_type"),
@@ -729,48 +810,268 @@ def serialize_listing_for_supabase(
         "hoa_fees": listing.get("hoa_fees"),
         "time_on_realtor": listing.get("time_on_realtor"),
         "zoning_type": listing.get("zoning_type"),
-        "search_criteria": payload["search_criteria"],
-        "scrape_limits": payload["scrape_limits"],
         "raw_listing": listing,
+        "last_seen_at": scraped_at,
         "last_scraped_at": scraped_at,
     }
 
 
-def save_to_supabase(config: SupabaseConfig, payload: dict[str, Any]) -> int:
-    scraped_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    rows = [
-        serialize_listing_for_supabase(listing, payload, scraped_at)
-        for listing in payload["listings"]
-    ]
-    if not rows:
-        logging.info("No listings to save to Supabase")
-        return 0
+def supabase_request(
+    config: SupabaseConfig,
+    path: str,
+    *,
+    method: str = "GET",
+    query: dict[str, Any] | None = None,
+    payload: Any | None = None,
+    prefer: str | None = None,
+) -> Any:
+    endpoint = f"{config.url}/rest/v1/{path}"
+    if query:
+        endpoint = f"{endpoint}?{parse.urlencode(query, doseq=True)}"
 
-    endpoint = f"{config.url}/rest/v1/{config.table}?on_conflict=url"
-    body = json.dumps(rows).encode("utf-8")
-    req = request.Request(
-        endpoint,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "apikey": config.key,
-            "Authorization": f"Bearer {config.key}",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
-    )
+    headers = {
+        "apikey": config.key,
+        "Authorization": f"Bearer {config.key}",
+        "Accept": "application/json",
+    }
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if prefer:
+        headers["Prefer"] = prefer
+
+    req = request.Request(endpoint, data=body, method=method, headers=headers)
     try:
         with request.urlopen(req, timeout=30) as response:
             if response.status >= 400:
                 raise RuntimeError(f"Supabase write failed with status {response.status}")
+            raw = response.read().decode("utf-8", errors="replace")
+            if not raw:
+                return None
+            return json.loads(raw)
     except error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Supabase write failed with status {exc.code}: {details}") from exc
+        raise RuntimeError(f"Supabase request failed with status {exc.code}: {details}") from exc
     except error.URLError as exc:
-        raise RuntimeError(f"Supabase write failed: {exc.reason}") from exc
+        raise RuntimeError(f"Supabase request failed: {exc.reason}") from exc
 
-    logging.info("Saved %s listing(s) to Supabase table %s", len(rows), config.table)
+
+def ensure_saved_search(config: SupabaseConfig, payload: dict[str, Any], scraped_at: str) -> dict[str, Any]:
+    row = {
+        "search_key": payload["saved_search_key"],
+        "name": payload["saved_search_name"],
+        "location": payload["search_criteria"]["location"],
+        "min_price": payload["search_criteria"]["min_price"],
+        "max_price": payload["search_criteria"]["max_price"],
+        "beds_min": payload["search_criteria"]["beds_min"],
+        "property_type": payload["search_criteria"]["property_type"],
+        "search_snapshot": payload["search_criteria"],
+        "last_scraped_at": scraped_at,
+        "is_active": True,
+    }
+    result = supabase_request(
+        config,
+        "saved_searches",
+        method="POST",
+        query={"on_conflict": "search_key", "select": "id,search_key,name"},
+        payload=[row],
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    if not isinstance(result, list) or not result:
+        raise RuntimeError("Supabase did not return a saved_searches row")
+    return result[0]
+
+
+def create_scrape_run(config: SupabaseConfig, saved_search_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    row = {
+        "saved_search_id": saved_search_id,
+        "status": "succeeded",
+        "started_at": payload["run_started_at"],
+        "finished_at": payload["run_finished_at"],
+        "summary_count": payload["summary_count"],
+        "detail_attempted": payload["detail_attempted"],
+        "detail_succeeded": payload["detail_succeeded"],
+        "failed_detail_urls": payload["failed_detail_urls"],
+        "search_snapshot": payload["search_criteria"],
+        "run_settings": payload["scrape_limits"],
+    }
+    result = supabase_request(
+        config,
+        "scrape_runs",
+        method="POST",
+        query={"select": "id"},
+        payload=[row],
+        prefer="return=representation",
+    )
+    if not isinstance(result, list) or not result:
+        raise RuntimeError("Supabase did not return a scrape_runs row")
+    return result[0]
+
+
+def get_saved_search_listing_states(config: SupabaseConfig, saved_search_id: int) -> dict[int, dict[str, Any]]:
+    result = supabase_request(
+        config,
+        "saved_search_listings",
+        query={
+            "saved_search_id": f"eq.{saved_search_id}",
+            "select": "id,listing_id,first_seen_at,first_seen_run_id,is_active",
+        },
+    )
+    if result is None:
+        return {}
+    if not isinstance(result, list):
+        raise RuntimeError("Supabase did not return saved_search_listings rows")
+    state_by_listing_id: dict[int, dict[str, Any]] = {}
+    for row in result:
+        listing_id = row.get("listing_id")
+        if isinstance(listing_id, int):
+            state_by_listing_id[listing_id] = row
+    return state_by_listing_id
+
+
+def upsert_listings(config: SupabaseConfig, payload: dict[str, Any], scraped_at: str) -> dict[str, int]:
+    rows = [serialize_listing_for_supabase(listing, scraped_at) for listing in payload["listings"]]
+    if not rows:
+        logging.info("No listings to save to Supabase")
+        return {}
+
+    result = supabase_request(
+        config,
+        "listings",
+        method="POST",
+        query={"on_conflict": "source_listing_key", "select": "id,source_listing_key"},
+        payload=rows,
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    if not isinstance(result, list):
+        raise RuntimeError("Supabase did not return listing rows")
+    listing_map: dict[str, int] = {}
+    for row in result:
+        source_listing_key = row.get("source_listing_key")
+        listing_id = row.get("id")
+        if isinstance(source_listing_key, str) and isinstance(listing_id, int):
+            listing_map[source_listing_key] = listing_id
+    return listing_map
+
+
+def save_scrape_run_listings(
+    config: SupabaseConfig,
+    *,
+    saved_search_id: int,
+    scrape_run_id: int,
+    payload: dict[str, Any],
+    listing_id_by_key: dict[str, int],
+    existing_listing_ids: set[int],
+) -> int:
+    rows = []
+    for listing in payload["listings"]:
+        listing_id = listing_id_by_key.get(listing["url"])
+        if listing_id is None:
+            continue
+        rows.append(
+            {
+                "scrape_run_id": scrape_run_id,
+                "saved_search_id": saved_search_id,
+                "listing_id": listing_id,
+                "results_page": listing.get("results_page"),
+                "is_new_in_run": listing_id not in existing_listing_ids,
+                "raw_listing_snapshot": listing,
+            }
+        )
+
+    if not rows:
+        return 0
+
+    supabase_request(
+        config,
+        "scrape_run_listings",
+        method="POST",
+        query={"on_conflict": "scrape_run_id,listing_id"},
+        payload=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
     return len(rows)
+
+
+def sync_saved_search_listings(
+    config: SupabaseConfig,
+    *,
+    saved_search_id: int,
+    scrape_run_id: int,
+    scraped_at: str,
+    listing_id_by_key: dict[str, int],
+    existing_states: dict[int, dict[str, Any]],
+) -> int:
+    supabase_request(
+        config,
+        "saved_search_listings",
+        method="PATCH",
+        query={"saved_search_id": f"eq.{saved_search_id}"},
+        payload={"is_active": False},
+        prefer="return=minimal",
+    )
+
+    if not listing_id_by_key:
+        return 0
+
+    rows = []
+    for listing_id in listing_id_by_key.values():
+        existing = existing_states.get(listing_id, {})
+        rows.append(
+            {
+                "saved_search_id": saved_search_id,
+                "listing_id": listing_id,
+                "first_seen_at": existing.get("first_seen_at") or scraped_at,
+                "last_seen_at": scraped_at,
+                "first_seen_run_id": existing.get("first_seen_run_id") or scrape_run_id,
+                "last_seen_run_id": scrape_run_id,
+                "is_active": True,
+            }
+        )
+
+    supabase_request(
+        config,
+        "saved_search_listings",
+        method="POST",
+        query={"on_conflict": "saved_search_id,listing_id"},
+        payload=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+    return len(rows)
+
+
+def save_to_supabase(config: SupabaseConfig, payload: dict[str, Any]) -> int:
+    scraped_at = payload["run_finished_at"]
+    saved_search = ensure_saved_search(config, payload, scraped_at)
+    scrape_run = create_scrape_run(config, int(saved_search["id"]), payload)
+    listing_id_by_key = upsert_listings(config, payload, scraped_at)
+    existing_states = get_saved_search_listing_states(config, int(saved_search["id"]))
+    linked_count = save_scrape_run_listings(
+        config,
+        saved_search_id=int(saved_search["id"]),
+        scrape_run_id=int(scrape_run["id"]),
+        payload=payload,
+        listing_id_by_key=listing_id_by_key,
+        existing_listing_ids=set(existing_states),
+    )
+    active_count = sync_saved_search_listings(
+        config,
+        saved_search_id=int(saved_search["id"]),
+        scrape_run_id=int(scrape_run["id"]),
+        scraped_at=scraped_at,
+        listing_id_by_key=listing_id_by_key,
+        existing_states=existing_states,
+    )
+
+    logging.info(
+        "Saved %s listing(s) into saved_search=%s and scrape_run=%s; active listings now %s",
+        linked_count,
+        saved_search["search_key"],
+        scrape_run["id"],
+        active_count,
+    )
+    return linked_count
 
 
 async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -> dict[str, Any]:
@@ -1112,8 +1413,16 @@ async def async_main() -> int:
         criteria = collect_search_criteria(args)
         limits = collect_scrape_limits(args)
         supabase_config = get_supabase_config(args)
+        run_started_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
         scrape_result = await scrape_listings(criteria, limits)
-        payload = build_run_payload(criteria, limits, scrape_result)
+        run_finished_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        payload = build_run_payload(
+            criteria,
+            limits,
+            scrape_result,
+            run_started_at=run_started_at,
+            run_finished_at=run_finished_at,
+        )
         output_path = save_results(payload)
         if supabase_config is not None:
             save_to_supabase(supabase_config, payload)
