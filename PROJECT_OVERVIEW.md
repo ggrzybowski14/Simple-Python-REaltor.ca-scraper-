@@ -86,6 +86,7 @@ This repository now has an integrated scraper flow in place:
 - Phase 3 detail extraction is now integrated into the same script: enriched listings can include full description text, property type, building type, square footage, land size, built year, annual taxes, HOA/strata-style fees when present, time on Realtor.ca, and zoning type.
 
 The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is downstream data modeling and storage integration, starting with Supabase.
+The current codebase should still be understood as a browser-first foundation project rather than a finished end-user product. The next major step is the interface layer that sits on top of the now-integrated scraper and Supabase storage.
 
 ## Next Steps
 
@@ -132,21 +133,24 @@ Current known limitation:
 
 - Some detail fields will still be absent on listings where Realtor.ca does not display them, which is expected and should continue to be treated as normal sparse data rather than as scrape failure.
 
-### Next Active Scope: Supabase Integration
+### Next Active Scope: Interface Layer
 
-The next active scope is to persist the integrated scraper output into Supabase.
-
-Recommended implementation direction:
-
-- Keep the current browser-first search, pagination, and detail enrichment flow unchanged.
-- Define a stable Supabase table schema that mirrors the current integrated JSON output.
-- Normalize field names and nullability in code before inserts are introduced.
-- Add a write layer after successful scraping rather than mixing database concerns into the page-extraction logic.
-- Preserve the current JSON file output and failure artifacts as a parallel debugging trail while database storage is added.
+Supabase integration is now in place. The next active scope is deciding how a user should interact with the system beyond directly running the script.
 
 Current implementation status:
 
-- The main script now supports an optional Supabase upsert path behind `--save-to-supabase`.
-- Environment-based configuration is expected through `SUPABASE_URL`, `SUPABASE_KEY`, and optional `SUPABASE_TABLE`.
+- The main script can automatically upsert listings into Supabase when `.env.local` contains valid `SUPABASE_URL` and `SUPABASE_KEY` values.
 - A starter table definition exists in [supabase/schema.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/schema.sql:1).
 - Local JSON output remains in place even when Supabase writes are enabled.
+- Live validation proved the current script can scrape, save JSON locally, and upsert into Supabase successfully.
+
+Recommended implementation direction for the interface layer:
+
+- Keep the current browser-first search, pagination, detail enrichment, and Supabase write flow unchanged underneath.
+- Decide whether the first user-facing layer should be:
+  - a better CLI experience
+  - a small local web UI
+  - or a lightweight app that reads existing listings back from Supabase
+- Treat the interface as a thin orchestration layer over the current scraper rather than rewriting scraper logic into the UI.
+- Use Supabase as the durable source of previously scraped listings so the interface can show more than just the latest run.
+- Preserve current logging, JSON output, and failure artifacts for debugging while the interface layer is added.

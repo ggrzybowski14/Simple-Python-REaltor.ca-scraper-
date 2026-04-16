@@ -9,7 +9,8 @@ Current state:
 - Phase 1 complete: input-driven browser search
 - Phase 2 complete: broader summary collection plus conservative detail enrichment
 - Phase 3 integrated into the same script: richer listing-page detail extraction
-- Next step: Supabase-ready storage integration
+- Supabase integration complete: automatic listing upserts when local credentials are present
+- Next step: decide and build the interface layer
 
 ## What it does
 
@@ -27,7 +28,7 @@ Current state:
 - Prints a few fields to the terminal
 - Saves a screenshot and HTML snapshot on failure
 - Saves JSON output that includes the search criteria used for the run
-- Can optionally upsert listings into Supabase after a successful scrape
+- Automatically upserts listings into Supabase after a successful scrape when local Supabase credentials are present
 
 ## Setup
 
@@ -66,16 +67,16 @@ python scraper.py \
 
 ## Supabase
 
-Supabase writes are optional and are handled by the same `scraper.py` script.
+Supabase writes are integrated into the same `scraper.py` script.
 
 Setup:
 
 1. Create the table in Supabase with [supabase/schema.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/schema.sql:1).
-2. Copy `.env.example` to `.env` and fill in:
+2. Copy `.env.example` to `.env.local` and fill in:
    - `SUPABASE_URL`
    - `SUPABASE_KEY`
    - `SUPABASE_TABLE` if you want a table name other than `realtor_listings`
-3. Run the scraper with `--save-to-supabase`.
+3. Run the scraper normally. If credentials are present, Supabase upload happens automatically.
 
 Example:
 
@@ -88,11 +89,13 @@ python scraper.py \
   --max-pages 1 \
   --max-listings 2 \
   --detail-limit 2 \
-  --detail-concurrency 1 \
-  --save-to-supabase
+  --detail-concurrency 1
 ```
 
-The script still saves local JSON output even when Supabase writes are enabled.
+Notes:
+
+- The script still saves local JSON output even when Supabase writes are enabled.
+- If you want to disable database writes for a specific run, use `--no-supabase`.
 
 ## Current Integrated Flow
 
@@ -112,6 +115,7 @@ Example validated outcome:
 - produced `58` visible matching listings on Realtor.ca for that search state in the latest validated run
 - successfully collected `12` summaries in a broader validation pass
 - successfully enriched `4` detail pages with the cleaned Phase 3 schema
+- successfully upserted validated listing data into Supabase in live testing
 
 Current enriched fields include:
 
@@ -128,13 +132,19 @@ Current enriched fields include:
 
 ## Next Step
 
-The next build step is Supabase integration.
+The next build step is the interface layer on top of the current scraper plus Supabase foundation.
 
-That should focus on:
+Recommended options to evaluate:
 
-- validating the live insert path against a real Supabase project
-- deciding whether a separate `scrape_runs` table is needed in addition to `realtor_listings`
-- preserving the current file output and failure artifacts alongside database writes
+- improve the current CLI flow with clearer run modes and prompts
+- build a small local web UI for entering filters and viewing saved listings
+- define a simple read layer on top of Supabase so the interface can browse prior scraped listings instead of only the latest run
+
+Recommended order:
+
+1. decide whether the first interface should be CLI-first or web-first
+2. keep the current scraper and storage flow unchanged underneath
+3. build the interface as a thin layer on top of the existing `scraper.py` and Supabase data
 
 ## Logs and failure artifacts
 
