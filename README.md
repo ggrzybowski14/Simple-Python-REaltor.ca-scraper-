@@ -14,7 +14,8 @@ Current state:
 - Phase 1 Supabase model working: saved searches, scrape runs, canonical listings, and run history
 - Light lifecycle handling implemented: active listings per saved search plus `is_new_in_run`
 - Remaining Phase 1 follow-up: prove the inactive-listing transition with a controlled rerun
-- Next active step: start the local website on top of the validated scraper and data foundation
+- Local website scaffold added: dashboard, saved search detail view, and background scrape launch
+- Next active step: iterate on the local website on top of the validated scraper and data foundation
 
 ## What It Does Today
 
@@ -43,6 +44,7 @@ This is not yet:
 - a buy-box evaluation engine
 - a market fundamentals analyzer
 - a multi-user application
+- a polished full website workflow
 
 The repository is currently the scraper and ingestion foundation for those later layers.
 
@@ -79,7 +81,12 @@ python scraper.py \
   --max-listings 50 \
   --detail-limit 10 \
   --detail-concurrency 2
+
+# run the first local website scaffold
+python app.py
 ```
+
+Then open `http://127.0.0.1:5000`.
 
 ## Supabase
 
@@ -155,6 +162,26 @@ Lifecycle status:
 - `is_new_in_run` is now tracked per scrape run
 - the explicit inactive transition still needs a controlled verification run against the same saved-search context
 
+## Local Website Scaffold
+
+The repository now includes a first local website scaffold in [app.py](/Users/georgia/Projects/simple realtor.ca scraper python/app.py:1).
+
+Current website scope:
+
+- dashboard showing saved searches
+- recent scrape runs
+- saved-search detail page showing current active listings
+- local form to launch a new headed scrape in the background
+- local job detail page with basic log output
+
+Current website limitations:
+
+- no authentication
+- no persistent job queue beyond the current local app process
+- no inline listing analysis yet
+- no edit/delete workflow for saved searches yet
+- no polished error handling yet
+
 ## Product Direction
 
 The intended product direction is:
@@ -190,7 +217,7 @@ Remaining near-term follow-up:
 
 Planned direction after that:
 
-1. Phase 2: local website for saved searches, scrape runs, and active listings
+1. continue Phase 2 website iteration on top of the current scaffold
 2. small follow-up on lifecycle verification if still needed during website work
 3. Phase 3: listing analysis and buy-box filtering
 4. later: workflow refinements and optional market-analysis features

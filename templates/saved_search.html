@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}{{ saved_search.name }} | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Saved Search Detail</p>
+    <h1>{{ saved_search.name }}</h1>
+    <p class="hero-copy">
+      Current active listings for this saved search are read from the lifecycle-aware view
+      <code>current_active_saved_search_listings</code>.
+    </p>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-label">Location</span>
+      <strong>{{ saved_search.location }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Active Scraped</span>
+      <strong>{{ active_listings|length }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Realtor Visible Results</span>
+      <strong>{{ latest_run.results_count if latest_run and latest_run.results_count is not none else 'Unknown' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Last Scrape</span>
+      <strong>{{ saved_search.last_scraped_at or 'Never' }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Active Listings</p>
+      <h2>{{ active_listings|length }} listing(s)</h2>
+    </div>
+    {% if active_listings %}
+    <div class="card-list">
+      {% for listing in active_listings %}
+      <article class="info-card listing-card">
+        <div class="card-topline">
+          <h3>
+            <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">
+              {{ listing.address }}
+            </a>
+          </h3>
+          {% if listing.is_new_in_run %}
+          <span class="pill accent">New in run</span>
+          {% endif %}
+        </div>
+        <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
+        <p class="meta-line">
+          Beds: {{ listing.bedrooms or 'N/A' }} |
+          Baths: {{ listing.bathrooms or 'N/A' }} |
+          {{ listing.property_type or listing.building_type or 'Unknown type' }}
+        </p>
+        <p class="meta-line">
+          {{ listing.square_feet or 'No sqft' }} |
+          {{ listing.land_size or 'No lot size' }} |
+          Built: {{ listing.built_in or 'N/A' }}
+        </p>
+        <p class="meta-line">
+          Results page {{ listing.results_page or '?' }} | Last seen {{ listing.last_seen_at }}
+        </p>
+        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">View scraped details</a>
+        <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing</a>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No active listings found for this saved search yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Recent Runs</p>
+      <h2>History for this search</h2>
+    </div>
+    {% if scrape_runs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Status</th>
+          <th>Visible</th>
+          <th>Summary</th>
+          <th>Detail</th>
+          <th>Finished</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in scrape_runs %}
+        <tr>
+          <td>#{{ run.id }}</td>
+          <td><span class="pill status-{{ run.status }}">{{ run.status }}</span></td>
+          <td>{{ run.results_count if run.results_count is not none else 'Unknown' }}</td>
+          <td>{{ run.summary_count }}</td>
+          <td>{{ run.detail_succeeded }}/{{ run.detail_attempted }}</td>
+          <td>{{ run.finished_at or 'Running' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No scrape history recorded yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card">
+  <div>
+    <p class="eyebrow">Phase 2 Scaffold</p>
+    <h1>Saved searches, recent runs, and active listings in one local view.</h1>
+    <p class="hero-copy">
+      This first website layer is intentionally thin. It reads from the validated Supabase model and launches the existing
+      scraper in the background rather than reimplementing scraper logic in the UI.
+    </p>
+  </div>
+</section>
+
+<section class="content-grid">
+  <div class="panel panel-form">
+    <div class="panel-header">
+      <p class="eyebrow">Launch Scrape</p>
+      <h2>Start a new scrape</h2>
+    </div>
+    <form method="post" action="{{ url_for('create_scrape') }}" class="scrape-form">
+      <label>
+        <span>Location</span>
+        <input type="text" name="location" placeholder="Victoria" required>
+      </label>
+      <label>
+        <span>Minimum beds</span>
+        <input type="number" name="beds_min" min="0" placeholder="2">
+      </label>
+      <label>
+        <span>Property type</span>
+        <select name="property_type">
+          <option value="">Any</option>
+          {% for option in property_type_options %}
+          <option value="{{ option }}">{{ option.title() }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Minimum price</span>
+        <input type="number" name="min_price" min="0" step="1000" placeholder="500000">
+      </label>
+      <label>
+        <span>Maximum price</span>
+        <input type="number" name="max_price" min="0" step="1000" placeholder="1000000">
+      </label>
+      <details class="advanced-box">
+        <summary>Advanced limits</summary>
+        <div class="advanced-grid">
+          <label>
+            <span>Max pages</span>
+            <input type="number" name="max_pages" min="1" value="3">
+          </label>
+          <label>
+            <span>Max listings</span>
+            <input type="number" name="max_listings" min="1" value="25">
+          </label>
+          <label>
+            <span>Detail limit</span>
+            <input type="number" name="detail_limit" min="0" value="25">
+          </label>
+          <label>
+            <span>Detail concurrency</span>
+            <input type="number" name="detail_concurrency" min="1" value="1">
+          </label>
+        </div>
+      </details>
+      <button type="submit" class="button-primary">Run headed scrape</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Saved Searches</p>
+      <h2>Tracked searches</h2>
+    </div>
+    {% if saved_searches %}
+    <div class="card-list">
+      {% for search in saved_searches %}
+      <a class="info-card clickable" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">
+        <div class="card-topline">
+          <h3>{{ search.name }}</h3>
+          <span class="pill">#{{ search.id }}</span>
+        </div>
+        <p class="muted">{{ search.location }}</p>
+        <p class="meta-line">
+          Beds: {{ search.beds_min or 'Any' }} | Type: {{ search.property_type or 'Any' }} |
+          Max: {{ search.max_price or 'Any' }}
+        </p>
+        <p class="meta-line">Last scraped: {{ search.last_scraped_at or 'Never' }}</p>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No saved searches yet. Run the scraper once from this page to create one.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Recent Runs</p>
+      <h2>Scrape history</h2>
+    </div>
+    {% if recent_runs %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Run</th>
+          <th>Saved Search</th>
+          <th>Status</th>
+          <th>Summary</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in recent_runs %}
+        <tr>
+          <td>#{{ run.id }}</td>
+          <td>{{ run.saved_search_id }}</td>
+          <td><span class="pill status-{{ run.status }}">{{ run.status }}</span></td>
+          <td>{{ run.summary_count }}</td>
+          <td>{{ run.detail_succeeded }}/{{ run.detail_attempted }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No runs have been recorded yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Local Jobs</p>
+      <h2>Scrapes launched from this website session</h2>
+    </div>
+    {% if jobs %}
+    <div class="card-list compact">
+      {% for job in jobs %}
+      <a class="info-card clickable" href="{{ url_for('job_detail', job_id=job.id) }}">
+        <div class="card-topline">
+          <h3>{{ job.id }}</h3>
+          <span class="pill status-{{ job.status }}">{{ job.status }}</span>
+        </div>
+        <p class="meta-line">Started: {{ job.started_at }}</p>
+        <p class="meta-line">Command: {{ job.args|join(' ') }}</p>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No local scrape jobs launched from the website yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

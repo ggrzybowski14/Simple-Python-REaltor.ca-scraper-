@@ -432,7 +432,7 @@ Current status:
 
 ### Phase 2: Local Website
 
-Once Phase 1 is stable, build the first local user-facing application layer.
+Phase 2 has now started with an initial local website scaffold.
 
 Goals:
 
@@ -450,6 +450,19 @@ Expected shape of the first UI:
 - listing detail view
 
 The first website should be a thin orchestration and read layer on top of the scraper and Supabase foundation, not a rewrite of scraper logic.
+
+Current scaffold status:
+
+- local Python website entrypoint added
+- dashboard added for saved searches and recent runs
+- saved-search detail page added for current active listings
+- local background scrape launch wired to the existing `scraper.py`
+
+Immediate next website work:
+
+- improve scrape job status and refresh behavior
+- refine saved-search detail presentation
+- decide whether the next increment should prioritize saved-search management or listing-detail views
 
 ### Phase 3: Listing Analysis Layer
 

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Job {{ job.id }} | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Background Scrape Job</p>
+    <h1>Job {{ job.id }}</h1>
+    <p class="hero-copy">This view shows the local subprocess status and the recent log tail for a scrape launched from the website.</p>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-label">Status</span>
+      <strong>{{ job.status }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Started</span>
+      <strong>{{ job.started_at }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Command</p>
+      <h2>Arguments</h2>
+    </div>
+    <pre class="log-block">{{ job.args|join(' ') }}</pre>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Recent Output</p>
+      <h2>Log tail</h2>
+    </div>
+    <pre class="log-block">{{ job.log_tail or 'No output yet.' }}</pre>
+  </div>
+</section>
+{% endblock %}

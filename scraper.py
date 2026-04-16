@@ -487,6 +487,22 @@ async def apply_search_criteria(page: Page, criteria: SearchCriteria) -> None:
     await log_results_snapshot(page, "After filters")
 
 
+async def apply_search_within_boundary_if_present(page: Page) -> None:
+    boundary_control = page.locator("text=/Search within boundary/i").first
+    try:
+        if await boundary_control.count() == 0:
+            return
+        if not await boundary_control.is_visible():
+            return
+        logging.info("Applying current visible map boundary")
+        previous_url = page.url
+        await boundary_control.click()
+        await wait_for_results_refresh(page, previous_url)
+        await log_results_snapshot(page, "After boundary apply")
+    except Exception as error:
+        logging.info("Search-within-boundary step skipped: %s", error)
+
+
 async def scrape_card(card) -> dict[str, Any] | None:
     link = card.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").first
     href = await link.get_attribute("href")
@@ -781,6 +797,7 @@ def build_run_payload(
         },
         "run_started_at": run_started_at,
         "run_finished_at": run_finished_at,
+        "results_count": scrape_result["results_count"],
         "summary_count": scrape_result["summary_count"],
         "detail_attempted": scrape_result["detail_attempted"],
         "detail_succeeded": scrape_result["detail_succeeded"],
@@ -889,6 +906,7 @@ def create_scrape_run(config: SupabaseConfig, saved_search_id: int, payload: dic
         "status": "succeeded",
         "started_at": payload["run_started_at"],
         "finished_at": payload["run_finished_at"],
+        "results_count": payload["results_count"],
         "summary_count": payload["summary_count"],
         "detail_attempted": payload["detail_attempted"],
         "detail_succeeded": payload["detail_succeeded"],
@@ -1197,14 +1215,30 @@ async def collect_listing_summaries_from_current_page(page: Page, limit: int) ->
 
 
 async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
-    next_link = page.locator("a[aria-label='Go to the next page']").first
-    if await next_link.count() == 0:
+    next_links = page.locator("a[aria-label='Go to the next page']")
+    link_count = await next_links.count()
+    if link_count == 0:
         logging.warning("Next-page control was not found")
         return False
 
-    current_class = await next_link.get_attribute("class") or ""
-    if "disabled" in current_class.lower():
-        logging.info("Next-page control appears disabled")
+    next_link = None
+    for index in range(link_count):
+        candidate = next_links.nth(index)
+        try:
+            if not await candidate.is_visible():
+                continue
+            current_class = (await candidate.get_attribute("class") or "").lower()
+            disabled_attr = await candidate.get_attribute("disabled")
+            aria_disabled = (await candidate.get_attribute("aria-disabled") or "").lower()
+            if "disabled" in current_class or disabled_attr is not None or aria_disabled == "true":
+                continue
+            next_link = candidate
+            break
+        except Exception:
+            continue
+
+    if next_link is None:
+        logging.info("No enabled visible next-page control is available")
         return False
 
     logging.info("Navigating to the next results page")
@@ -1345,9 +1379,11 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
             await human_pause(1.0, 1.8)
 
             await apply_search_criteria(page, criteria)
+            await apply_search_within_boundary_if_present(page)
 
             logging.info("Waiting for listing links to appear")
             await wait_for_listings(page)
+            results_count = await extract_results_count(page)
 
             visible_link_count = await page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").count()
             logging.info("Found %s listing links after applying filters", visible_link_count)
@@ -1381,6 +1417,7 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
             return {
                 "listing_summaries": summaries,
                 "listings": merged_listings,
+                "results_count": results_count,
                 "summary_count": len(summaries),
                 "detail_attempted": detail_attempted,
                 "detail_succeeded": detail_succeeded,

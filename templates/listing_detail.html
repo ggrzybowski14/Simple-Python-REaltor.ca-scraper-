@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ listing.address }} | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Listing Detail</p>
+    <h1>{{ listing.address }}</h1>
+    <p class="hero-copy">
+      Full scraped detail for an active listing within <strong>{{ saved_search.name }}</strong>.
+    </p>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-label">Price</span>
+      <strong>{{ listing.price or 'Unavailable' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Results Page</span>
+      <strong>{{ listing.results_page or '?' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Last Seen</span>
+      <strong>{{ listing.last_seen_at }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Property Facts</p>
+      <h2>Scraped fields</h2>
+    </div>
+    <div class="facts-grid">
+      <div class="fact-row"><span>Beds</span><strong>{{ listing.bedrooms or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Baths</span><strong>{{ listing.bathrooms or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Property type</span><strong>{{ listing.property_type or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Building type</span><strong>{{ listing.building_type or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Square feet</span><strong>{{ listing.square_feet or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Land size</span><strong>{{ listing.land_size or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Built in</span><strong>{{ listing.built_in or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Annual taxes</span><strong>{{ listing.annual_taxes or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>HOA fees</span><strong>{{ listing.hoa_fees or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Time on Realtor</span><strong>{{ listing.time_on_realtor or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Zoning</span><strong>{{ listing.zoning_type or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Source key</span><strong>{{ listing.source_listing_key }}</strong></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Description</p>
+      <h2>Listing description</h2>
+    </div>
+    <div class="description-block">
+      {{ listing.listing_description or 'No listing description was scraped for this property yet.' }}
+    </div>
+    <div class="detail-actions">
+      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
+      <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing on Realtor.ca</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

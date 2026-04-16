@@ -30,6 +30,7 @@ create table if not exists public.scrape_runs (
     status text not null,
     started_at timestamptz not null default now(),
     finished_at timestamptz,
+    results_count integer,
     summary_count integer not null default 0,
     detail_attempted integer not null default 0,
     detail_succeeded integer not null default 0,
