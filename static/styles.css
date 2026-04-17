@@ -209,6 +209,20 @@ select {
   padding: 1.1rem;
 }
 
+.listing-thumb-link,
+.photo-thumb-link {
+  display: block;
+}
+
+.listing-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 16px;
+  margin-bottom: 0.9rem;
+  background: var(--surface-strong);
+}
+
 .clickable {
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
@@ -223,6 +237,12 @@ select {
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-start;
+}
+
+.card-topline h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .pill {
@@ -259,6 +279,21 @@ select {
 .muted,
 .meta-line {
   color: var(--muted);
+}
+
+.updated-indicator {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: #cb2f2f;
+  box-shadow: 0 0 0 4px rgba(203, 47, 47, 0.15);
+  flex: 0 0 auto;
+}
+
+.recently-updated-label {
+  color: var(--accent-deep);
+  font-weight: 700;
+  margin-left: 0.45rem;
 }
 
 .meta-line,
@@ -317,6 +352,43 @@ select {
   flex-wrap: wrap;
   gap: 0.4rem 1rem;
   margin-top: 1rem;
+}
+
+.detail-back-row {
+  margin-bottom: 1rem;
+}
+
+.photo-panel {
+  margin-bottom: 1.5rem;
+}
+
+.photo-hero-wrap {
+  border-radius: 22px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.photo-hero {
+  width: 100%;
+  max-height: 520px;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.photo-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 14px;
+  display: block;
+  background: var(--surface-strong);
 }
 
 .data-table {

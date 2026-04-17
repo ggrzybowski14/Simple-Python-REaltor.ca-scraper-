@@ -42,6 +42,11 @@
     <div class="card-list">
       {% for listing in active_listings %}
       <article class="info-card listing-card">
+        {% if listing.primary_photo_url %}
+        <a class="listing-thumb-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">
+          <img class="listing-thumb" src="{{ listing.primary_photo_url }}" alt="Primary photo for {{ listing.address }}">
+        </a>
+        {% endif %}
         <div class="card-topline">
           <h3>
             <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">

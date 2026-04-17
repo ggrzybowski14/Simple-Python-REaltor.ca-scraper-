@@ -383,6 +383,14 @@ What has been validated:
 - successful summary collection, detail enrichment, local JSON output, and Supabase writes
 - correct creation of saved search, scrape run, canonical listing, and run-history rows
 - correct population of the current active-listings view
+- safe speed-pass improvements without breaking the main flow:
+  - reduced fixed waits
+  - lower browser `slow_mo`
+  - successful detail enrichment with `detail_concurrency=2`
+- repeat-run detail reuse against Supabase:
+  - existing canonical listing rows can be loaded before detail scraping
+  - recent, fully enriched listings can be reused instead of reopened
+  - validated Duncan rerun reused `10` of `11` listing details and only opened `1` detail page
 
 What remains to be proven:
 
@@ -457,12 +465,15 @@ Current scaffold status:
 - dashboard added for saved searches and recent runs
 - saved-search detail page added for current active listings
 - local background scrape launch wired to the existing `scraper.py`
+- latest-run indicator added to saved-search cards
+- listing detail page now includes listing photos and richer detail presentation
 
 Immediate next website work:
 
 - improve scrape job status and refresh behavior
-- refine saved-search detail presentation
-- decide whether the next increment should prioritize saved-search management or listing-detail views
+- make run outcomes easier to understand without opening raw logs
+- refine dashboard and saved-search UX around latest runs
+- decide whether the next increment should prioritize saved-search management or listing workflow actions
 
 ### Phase 3: Listing Analysis Layer
 

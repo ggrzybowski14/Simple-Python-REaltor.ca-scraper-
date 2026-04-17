@@ -10,7 +10,7 @@ import re
 import sys
 from urllib import error, parse, request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ DEFAULT_DETAIL_LIMIT = 25
 DEFAULT_DETAIL_CONCURRENCY = 2
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
-TOP_FILTER_WAIT_MS = 3500
+TOP_FILTER_WAIT_MS = 900
 PROPERTY_TYPE_OPTIONS = {
     "house": {"value": "1", "label": "House"},
     "apartment": {"value": "17", "label": "Apartment"},
@@ -64,7 +64,7 @@ def configure_logging() -> None:
     )
 
 
-async def human_pause(min_seconds: float = 0.6, max_seconds: float = 1.6) -> None:
+async def human_pause(min_seconds: float = 0.25, max_seconds: float = 0.7) -> None:
     await asyncio.sleep(random.uniform(min_seconds, max_seconds))
 
 
@@ -72,19 +72,18 @@ async def move_mouse_like_human(page: Page) -> None:
     viewport = page.viewport_size or {"width": 1440, "height": 960}
     points = [
         (random.randint(80, 260), random.randint(120, 220)),
-        (random.randint(260, 520), random.randint(200, 380)),
         (random.randint(420, viewport["width"] - 160), random.randint(220, viewport["height"] - 160)),
     ]
     for x, y in points:
-        await page.mouse.move(x, y, steps=random.randint(12, 28))
-        await human_pause(0.15, 0.45)
+        await page.mouse.move(x, y, steps=random.randint(8, 18))
+        await human_pause(0.08, 0.22)
 
 
 async def variable_listing_pause() -> None:
     if random.random() < 0.2:
-        await human_pause(2.5, 4.5)
+        await human_pause(1.0, 1.8)
     else:
-        await human_pause(0.9, 2.0)
+        await human_pause(0.25, 0.6)
 
 
 async def save_failure_artifacts(page: Page, label: str) -> None:
@@ -139,7 +138,7 @@ async def dismiss_popups_if_present(page: Page) -> None:
         try:
             await page.get_by_role("button", name=re.compile(pattern, re.I)).click(timeout=2500)
             logging.info("Clicked popup button matching '%s'", pattern)
-            await human_pause(0.7, 1.4)
+            await human_pause(0.2, 0.5)
             return
         except TimeoutError:
             continue
@@ -152,7 +151,7 @@ async def build_context(playwright) -> BrowserContext:
     logging.info("Launching visible Chromium browser")
     browser = await playwright.chromium.launch(
         headless=False,
-        slow_mo=140,
+        slow_mo=60,
         args=[
             "--disable-blink-features=AutomationControlled",
             "--deny-permission-prompts",
@@ -272,6 +271,31 @@ def normalize_numeric_text(value: str | None) -> str | None:
     return normalize_spaces(value.replace(",", ""))
 
 
+def normalize_photo_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    compact = normalize_spaces(value)
+    if not compact or not re.match(r"^https?://", compact, re.I):
+        return None
+    lowered = compact.lower()
+    blocked_terms = (
+        "logo",
+        "icon",
+        "avatar",
+        "placeholder",
+        "spinner",
+        "loading",
+        "banner",
+        "sprite",
+        "map",
+        "googleapis",
+        "gstatic",
+    )
+    if any(term in lowered for term in blocked_terms):
+        return None
+    return compact
+
+
 def extract_numeric_feature(text: str, labels: list[str]) -> int | None:
     for label in labels:
         match = re.search(rf"(\d+)\s*{label}\b", text, re.I)
@@ -303,7 +327,7 @@ async def wait_for_results_refresh(page: Page, previous_url: str | None = None) 
             )
         except TimeoutError:
             logging.info("URL did not change after filter update; relying on listing wait instead")
-    await human_pause(1.0, 1.8)
+    await human_pause(0.2, 0.5)
     await wait_for_listings(page)
 
 
@@ -384,10 +408,10 @@ async def apply_location(page: Page, location: str) -> None:
     logging.info("Applying location filter: %s", location)
     search_box = page.locator("input[placeholder='City, Neighbourhood, Address or MLS® number']").first
     await search_box.click()
-    await human_pause(0.4, 0.9)
+    await human_pause(0.15, 0.35)
     await search_box.fill("")
-    await search_box.type(location, delay=random.randint(70, 140))
-    await human_pause(1.0, 1.8)
+    await search_box.type(location, delay=random.randint(35, 70))
+    await human_pause(0.3, 0.7)
 
     auto_complete = page.locator("#AutoCompleteCon-txtMapSearchInput")
     selected_location = False
@@ -411,9 +435,9 @@ async def apply_location(page: Page, location: str) -> None:
     if not selected_location:
         logging.info("Falling back to keyboard selection for location '%s'", location)
         await page.keyboard.press("ArrowDown")
-        await human_pause(0.3, 0.7)
+        await human_pause(0.1, 0.25)
         await page.keyboard.press("Enter")
-        await human_pause(0.8, 1.4)
+        await human_pause(0.2, 0.45)
 
     previous_url = page.url
     search_button = page.locator("button[aria-label='Search']").first
@@ -457,12 +481,12 @@ async def apply_property_type(page: Page, property_type: str) -> None:
     option = PROPERTY_TYPE_OPTIONS[property_type]
     logging.info("Applying property type filter: %s", option["label"])
     await page.locator("button:has-text('Filters')").click()
-    await human_pause(1.0, 1.6)
+    await human_pause(0.2, 0.45)
     previous_url = page.url
     await set_select_value(page, "#ddlBuildingType", value=option["value"])
-    await human_pause(0.8, 1.4)
+    await human_pause(0.2, 0.45)
     await page.locator("#mapMoreFiltersSearchBtn").click()
-    await page.wait_for_timeout(4000)
+    await page.wait_for_timeout(1200)
     await wait_for_results_refresh(page, previous_url)
 
 
@@ -505,7 +529,12 @@ async def apply_search_within_boundary_if_present(page: Page) -> None:
 
 async def scrape_card(card) -> dict[str, Any] | None:
     link = card.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").first
-    href = await link.get_attribute("href")
+    try:
+        if await link.count() == 0:
+            return None
+        href = await link.get_attribute("href", timeout=1500)
+    except TimeoutError:
+        return None
     if not href:
         return None
 
@@ -652,6 +681,63 @@ async def extract_json_ld(page: Page) -> dict[str, Any]:
             elif "address" in candidate or "description" in candidate:
                 payload.update(candidate)
     return payload
+
+
+def append_photo_candidate(photo_urls: list[str], seen_urls: set[str], url: str | None) -> None:
+    normalized = normalize_photo_url(url)
+    if not normalized or normalized in seen_urls:
+        return
+    seen_urls.add(normalized)
+    photo_urls.append(normalized)
+
+
+async def extract_photo_urls(page: Page, json_ld: dict[str, Any]) -> list[str]:
+    photo_urls: list[str] = []
+    seen_urls: set[str] = set()
+
+    image_payload = json_ld.get("image")
+    image_candidates = image_payload if isinstance(image_payload, list) else [image_payload]
+    for candidate in image_candidates:
+        if isinstance(candidate, str):
+            append_photo_candidate(photo_urls, seen_urls, candidate)
+        elif isinstance(candidate, dict):
+            append_photo_candidate(photo_urls, seen_urls, candidate.get("url"))
+            append_photo_candidate(photo_urls, seen_urls, candidate.get("contentUrl"))
+
+    try:
+        image_meta = await page.locator("meta[property='og:image'], meta[name='twitter:image']").evaluate_all(
+            """
+            nodes => nodes
+                .map(node => node.getAttribute('content'))
+                .filter(Boolean)
+            """
+        )
+        for url in image_meta:
+            append_photo_candidate(photo_urls, seen_urls, url)
+    except Exception:
+        pass
+
+    try:
+        image_candidates = await page.locator("img").evaluate_all(
+            """
+            nodes => nodes.map(img => ({
+                url: img.currentSrc || img.src || '',
+                width: img.naturalWidth || img.width || 0,
+                height: img.naturalHeight || img.height || 0,
+                alt: img.alt || ''
+            }))
+            """
+        )
+        for candidate in image_candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if (candidate.get("width") or 0) < 320 or (candidate.get("height") or 0) < 180:
+                continue
+            append_photo_candidate(photo_urls, seen_urls, candidate.get("url"))
+    except Exception:
+        pass
+
+    return photo_urls[:12]
 
 
 def clean_zoning(value: str | None) -> str | None:
@@ -808,6 +894,73 @@ def build_run_payload(
     }
 
 
+DETAIL_REUSE_WINDOW = timedelta(hours=24)
+
+
+def is_listing_fully_enriched(listing: dict[str, Any]) -> bool:
+    raw_listing = listing.get("raw_listing") if isinstance(listing.get("raw_listing"), dict) else {}
+    photo_urls = listing.get("photo_urls")
+    if not isinstance(photo_urls, list):
+        raw_photo_urls = raw_listing.get("photo_urls")
+        photo_urls = raw_photo_urls if isinstance(raw_photo_urls, list) else []
+    primary_photo_url = listing.get("primary_photo_url") or raw_listing.get("primary_photo_url")
+    return all(
+        [
+            listing.get("listing_description") or raw_listing.get("listing_description"),
+            listing.get("square_feet") or raw_listing.get("square_feet"),
+            listing.get("built_in") or raw_listing.get("built_in"),
+            listing.get("annual_taxes") or raw_listing.get("annual_taxes"),
+            primary_photo_url or photo_urls,
+        ]
+    )
+
+
+def is_listing_recently_scraped(scraped_at: str | None) -> bool:
+    if not scraped_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(scraped_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - parsed <= DETAIL_REUSE_WINDOW
+
+
+def build_listing_from_existing(summary: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    raw_listing = existing.get("raw_listing") if isinstance(existing.get("raw_listing"), dict) else {}
+    merged = dict(raw_listing)
+    merged.setdefault("url", summary["url"])
+    merged["url"] = summary["url"]
+    merged["address"] = summary.get("address") or existing.get("address") or merged.get("address")
+    merged["price"] = summary.get("price") or existing.get("price") or merged.get("price")
+    merged["bedrooms"] = summary.get("bedrooms") if summary.get("bedrooms") is not None else existing.get("bedrooms", merged.get("bedrooms"))
+    merged["bathrooms"] = summary.get("bathrooms") if summary.get("bathrooms") is not None else existing.get("bathrooms", merged.get("bathrooms"))
+    merged["results_page"] = summary.get("results_page")
+    for field in (
+        "listing_description",
+        "property_type",
+        "building_type",
+        "square_feet",
+        "land_size",
+        "built_in",
+        "annual_taxes",
+        "hoa_fees",
+        "time_on_realtor",
+        "zoning_type",
+        "primary_photo_url",
+    ):
+        if not merged.get(field):
+            existing_value = existing.get(field)
+            if existing_value:
+                merged[field] = existing_value
+    if not merged.get("photo_urls"):
+        raw_photo_urls = raw_listing.get("photo_urls")
+        if isinstance(raw_photo_urls, list):
+            merged["photo_urls"] = raw_photo_urls
+    return merged
+
+
 def serialize_listing_for_supabase(listing: dict[str, Any], scraped_at: str) -> dict[str, Any]:
     return {
         "source": "realtor.ca",
@@ -946,6 +1099,36 @@ def get_saved_search_listing_states(config: SupabaseConfig, saved_search_id: int
         if isinstance(listing_id, int):
             state_by_listing_id[listing_id] = row
     return state_by_listing_id
+
+
+def fetch_existing_listings(config: SupabaseConfig, listing_keys: list[str]) -> dict[str, dict[str, Any]]:
+    unique_keys = sorted({key for key in listing_keys if key})
+    if not unique_keys:
+        return {}
+
+    quoted_keys = ",".join(json.dumps(key) for key in unique_keys)
+    result = supabase_request(
+        config,
+        "listings",
+        query={
+            "source_listing_key": f"in.({quoted_keys})",
+            "select": (
+                "source_listing_key,address,price,bedrooms,bathrooms,listing_description,property_type,"
+                "building_type,square_feet,land_size,built_in,annual_taxes,hoa_fees,time_on_realtor,"
+                "zoning_type,last_scraped_at,raw_listing"
+            ),
+        },
+    )
+    if result is None:
+        return {}
+    if not isinstance(result, list):
+        raise RuntimeError("Supabase did not return listings rows")
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    for row in result:
+        key = row.get("source_listing_key")
+        if isinstance(key, str):
+            rows_by_key[key] = row
+    return rows_by_key
 
 
 def upsert_listings(config: SupabaseConfig, payload: dict[str, Any], scraped_at: str) -> dict[str, int]:
@@ -1097,11 +1280,11 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
     try:
         logging.info("Opening detail page: %s", listing["url"])
         await detail_page.goto(listing["url"], wait_until="domcontentloaded")
-        await human_pause(2.0, 3.0)
+        await human_pause(0.8, 1.3)
         await dismiss_popups_if_present(detail_page)
         await move_mouse_like_human(detail_page)
-        await detail_page.mouse.wheel(0, random.randint(400, 900))
-        await human_pause(1.0, 1.8)
+        await detail_page.mouse.wheel(0, random.randint(250, 600))
+        await human_pause(0.2, 0.45)
 
         await detail_page.locator("text=/MLS.*Number|Property Summary|Listing Description/i").first.wait_for(
             timeout=15000
@@ -1111,6 +1294,7 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
         detail_text = await detail_page.locator("body").inner_text()
         compact_detail_text = normalize_spaces(detail_text) or ""
         json_ld = await extract_json_ld(detail_page)
+        photo_urls = await extract_photo_urls(detail_page, json_ld)
 
         description = await extract_description(detail_page, detail_text)
         property_type = (
@@ -1187,6 +1371,8 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
         merged["hoa_fees"] = clean_optional_fee(hoa_fees)
         merged["time_on_realtor"] = clean_time_on_realtor(time_on_realtor)
         merged["zoning_type"] = zoning
+        merged["photo_urls"] = photo_urls
+        merged["primary_photo_url"] = photo_urls[0] if photo_urls else None
         return merged
     except Exception as error:
         logging.error("Detail scrape failed for %s: %s", listing["url"], error)
@@ -1243,7 +1429,7 @@ async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
 
     logging.info("Navigating to the next results page")
     await next_link.click()
-    await human_pause(1.2, 2.2)
+    await human_pause(0.3, 0.7)
 
     try:
         await page.wait_for_function(
@@ -1325,8 +1511,23 @@ async def enrich_listings(
     listings: list[dict[str, Any]],
     detail_limit: int,
     detail_concurrency: int,
+    existing_listing_rows: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], int, int]:
-    listings_to_enrich = listings[:detail_limit] if detail_limit else []
+    existing_listing_rows = existing_listing_rows or {}
+    reuse_candidates = listings[:detail_limit] if detail_limit else []
+    reused_listings: list[dict[str, Any]] = []
+    listings_to_enrich: list[dict[str, Any]] = []
+
+    for listing in reuse_candidates:
+        existing = existing_listing_rows.get(listing["url"])
+        if existing and is_listing_fully_enriched(existing) and is_listing_recently_scraped(existing.get("last_scraped_at")):
+            reused_listings.append(build_listing_from_existing(listing, existing))
+        else:
+            listings_to_enrich.append(listing)
+
+    if reused_listings:
+        logging.info("Reusing recent detail data for %s listing(s)", len(reused_listings))
+
     semaphore = asyncio.Semaphore(detail_concurrency)
 
     async def run_batch(targets: list[dict[str, Any]], concurrency: int) -> tuple[list[dict[str, Any]], list[str]]:
@@ -1356,7 +1557,8 @@ async def enrich_listings(
         failed_urls = [url for url in failed_urls if url not in retry_urls]
         failed_urls = [url for url in failed_urls if url in retry_failed_urls or url not in retry_urls]
 
-    enriched_by_url = {listing["url"]: listing for listing in enriched_listings}
+    combined_enriched = reused_listings + enriched_listings
+    enriched_by_url = {listing["url"]: listing for listing in combined_enriched}
     merged_listings = [enriched_by_url.get(listing["url"], dict(listing)) for listing in listings]
     return merged_listings, failed_urls, len(listings_to_enrich), len(enriched_listings)
 
@@ -1371,12 +1573,12 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
         try:
             logging.info("Opening start URL")
             await page.goto(START_URL, wait_until="domcontentloaded")
-            await human_pause(2.0, 3.2)
+            await human_pause(0.8, 1.4)
 
             await dismiss_popups_if_present(page)
             await move_mouse_like_human(page)
-            await page.mouse.wheel(0, random.randint(250, 700))
-            await human_pause(1.0, 1.8)
+            await page.mouse.wheel(0, random.randint(180, 420))
+            await human_pause(0.2, 0.45)
 
             await apply_search_criteria(page, criteria)
             await apply_search_within_boundary_if_present(page)
@@ -1397,11 +1599,25 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
             if not summaries:
                 raise RuntimeError("No listing data was extracted from the visible results cards")
 
+            existing_listing_rows: dict[str, dict[str, Any]] = {}
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_KEY")
+            if supabase_url and supabase_key:
+                try:
+                    existing_listing_rows = fetch_existing_listings(
+                        SupabaseConfig(url=supabase_url.rstrip("/"), key=supabase_key),
+                        [listing["url"] for listing in summaries],
+                    )
+                    logging.info("Loaded %s existing listing row(s) for detail reuse check", len(existing_listing_rows))
+                except Exception as error:
+                    logging.warning("Skipping detail reuse cache lookup: %s", error)
+
             merged_listings, failed_detail_urls, detail_attempted, detail_succeeded = await enrich_listings(
                 context,
                 summaries,
                 detail_limit=min(limits.detail_limit, len(summaries)),
                 detail_concurrency=limits.detail_concurrency,
+                existing_listing_rows=existing_listing_rows,
             )
 
             logging.info(

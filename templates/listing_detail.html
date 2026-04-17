@@ -3,6 +3,10 @@
 {% block title %}{{ listing.address }} | Real Estate Analyzer{% endblock %}
 
 {% block content %}
+<div class="detail-back-row">
+  <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
+</div>
+
 <section class="hero-card compact-hero">
   <div>
     <p class="eyebrow">Listing Detail</p>
@@ -26,6 +30,27 @@
     </div>
   </div>
 </section>
+
+{% if listing.primary_photo_url %}
+<section class="panel photo-panel">
+  <div class="panel-header">
+    <p class="eyebrow">Photos</p>
+    <h2>Listing gallery</h2>
+  </div>
+  <div class="photo-hero-wrap">
+    <img class="photo-hero" src="{{ listing.primary_photo_url }}" alt="Primary photo for {{ listing.address }}">
+  </div>
+  {% if listing.photo_urls and listing.photo_urls|length > 1 %}
+  <div class="photo-strip">
+    {% for photo_url in listing.photo_urls[1:6] %}
+    <a class="photo-thumb-link" href="{{ photo_url }}" target="_blank" rel="noreferrer">
+      <img class="photo-thumb" src="{{ photo_url }}" alt="Additional photo for {{ listing.address }}">
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 
 <section class="content-grid lower-grid">
   <div class="panel">
@@ -58,7 +83,6 @@
       {{ listing.listing_description or 'No listing description was scraped for this property yet.' }}
     </div>
     <div class="detail-actions">
-      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
       <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing on Realtor.ca</a>
     </div>
   </div>

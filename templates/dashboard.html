@@ -63,7 +63,7 @@
           </label>
           <label>
             <span>Detail concurrency</span>
-            <input type="number" name="detail_concurrency" min="1" value="1">
+            <input type="number" name="detail_concurrency" min="1" value="2">
           </label>
         </div>
       </details>
@@ -81,7 +81,12 @@
       {% for search in saved_searches %}
       <a class="info-card clickable" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">
         <div class="card-topline">
-          <h3>{{ search.name }}</h3>
+          <h3>
+            {{ search.name }}
+            {% if search.updated_in_latest_run %}
+            <span class="updated-indicator" title="Updated in latest run"></span>
+            {% endif %}
+          </h3>
           <span class="pill">#{{ search.id }}</span>
         </div>
         <p class="muted">{{ search.location }}</p>
@@ -89,7 +94,15 @@
           Beds: {{ search.beds_min or 'Any' }} | Type: {{ search.property_type or 'Any' }} |
           Max: {{ search.max_price or 'Any' }}
         </p>
-        <p class="meta-line">Last scraped: {{ search.last_scraped_at or 'Never' }}</p>
+        <p class="meta-line">
+          Last scraped: {{ search.last_scraped_at or 'Never' }}
+          {% if search.latest_run %}
+          <span class="recently-updated-label">Latest run #{{ search.latest_run.id }}</span>
+          {% endif %}
+          {% if search.updated_in_latest_run %}
+          <span class="recently-updated-label">Updated in latest run</span>
+          {% endif %}
+        </p>
       </a>
       {% endfor %}
     </div>

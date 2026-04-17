@@ -15,6 +15,8 @@ Current state:
 - Light lifecycle handling implemented: active listings per saved search plus `is_new_in_run`
 - Remaining Phase 1 follow-up: prove the inactive-listing transition with a controlled rerun
 - Local website scaffold added: dashboard, saved search detail view, and background scrape launch
+- Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
+- Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Next active step: iterate on the local website on top of the validated scraper and data foundation
 
 ## What It Does Today
@@ -28,7 +30,9 @@ Current state:
 - Waits, moves the mouse, and scrolls lightly
 - Collects matching listing summaries across result pages
 - Enriches detail pages with conservative low-risk concurrency
+- Reuses recent fully enriched listing detail on repeat runs when Supabase already has fresh data
 - Extracts richer listing detail fields including full description, property type, building type, square footage, land size, built year, taxes, time on Realtor.ca, and zoning type
+- Extracts listing photos and stores a primary photo plus additional gallery images
 - Logs visible result-count and page-state diagnostics during broader runs
 - Prints listing data to the terminal
 - Saves a screenshot and HTML snapshot on failure
@@ -129,7 +133,9 @@ What is already working in the integrated flow:
 - the scraper can collect broader result sets across multiple pages
 - the scraper can stop at configurable summary and detail caps
 - the scraper can enrich detail pages with `detail_concurrency=2`
+- repeat runs can reuse recently scraped, fully enriched listing detail instead of visiting every detail page again
 - the scraper can extract richer detail fields directly into the same JSON output
+- the scraper can extract listing photos and persist them inside the stored raw listing payload
 - the browser-first headed Playwright plus `playwright-stealth` setup remained stable during larger runs
 - the scraper now starts from a neutral Realtor.ca map page rather than a Victoria-specific hard-coded map state
 - the scraper now persists data into `saved_searches`, `scrape_runs`, `listings`, and `scrape_run_listings`
@@ -155,6 +161,8 @@ Current enriched fields include:
 - `hoa_fees`
 - `time_on_realtor`
 - `zoning_type`
+- `photo_urls`
+- `primary_photo_url`
 
 Lifecycle status:
 
@@ -171,8 +179,10 @@ Current website scope:
 - dashboard showing saved searches
 - recent scrape runs
 - saved-search detail page showing current active listings
+- visual indicator for the saved search updated by the latest run
 - local form to launch a new headed scrape in the background
 - local job detail page with basic log output
+- listing detail page with photo gallery and richer scraped fields
 
 Current website limitations:
 
@@ -181,6 +191,8 @@ Current website limitations:
 - no inline listing analysis yet
 - no edit/delete workflow for saved searches yet
 - no polished error handling yet
+- no dedicated run comparison or retry UX yet
+- no explicit “why this listing was reused vs re-scraped” UI yet
 
 ## Product Direction
 
@@ -213,14 +225,18 @@ What is now done:
 Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
-- then move directly into the local website
+- continue Phase 2 UX iteration around run visibility, run status, and listing workflow
 
 Planned direction after that:
 
 1. continue Phase 2 website iteration on top of the current scaffold
-2. small follow-up on lifecycle verification if still needed during website work
-3. Phase 3: listing analysis and buy-box filtering
-4. later: workflow refinements and optional market-analysis features
+2. improve Phase 2 run UX:
+   - clearer run status
+   - clearer saved-search update indicators
+   - better recent-run visibility from the dashboard
+3. small follow-up on lifecycle verification if still needed during website work
+4. Phase 3: listing analysis and buy-box filtering
+5. later: workflow refinements and optional market-analysis features
 
 See [PROJECT_OVERVIEW.md](/Users/georgia/Projects/simple realtor.ca scraper python/PROJECT_OVERVIEW.md:1) for the fuller roadmap and phase definitions.
 

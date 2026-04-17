@@ -22,7 +22,7 @@ LOCAL_JOB_LOG_DIR = APP_ROOT / "artifacts" / "web_jobs"
 DEFAULT_MAX_PAGES = 3
 DEFAULT_MAX_LISTINGS = 25
 DEFAULT_DETAIL_LIMIT = DEFAULT_MAX_LISTINGS
-DEFAULT_DETAIL_CONCURRENCY = 1
+DEFAULT_DETAIL_CONCURRENCY = 2
 PROPERTY_TYPE_OPTIONS = ["house", "apartment", "condo"]
 SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
@@ -32,6 +32,16 @@ SCRAPE_JOBS_LOCK = Lock()
 class SupabaseReadConfig:
     url: str
     key: str
+
+
+def parse_iso_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
 
 
 def create_app() -> Flask:
@@ -48,6 +58,15 @@ def create_app() -> Flask:
         config = get_supabase_read_config()
         saved_searches = fetch_saved_searches(config)
         recent_runs = fetch_recent_runs(config)
+        latest_run = recent_runs[0] if recent_runs else None
+        runs_by_saved_search = {}
+        for run in recent_runs:
+            runs_by_saved_search.setdefault(run["saved_search_id"], run)
+        for search in saved_searches:
+            search["latest_run"] = runs_by_saved_search.get(search["id"])
+            search["updated_in_latest_run"] = bool(
+                latest_run and latest_run.get("saved_search_id") == search["id"]
+            )
         job_snapshots = list_scrape_jobs()
         return render_template(
             "dashboard.html",
@@ -150,7 +169,14 @@ def fetch_saved_searches(config: SupabaseReadConfig) -> list[dict[str, Any]]:
             "order": "last_scraped_at.desc.nullslast,id.desc",
         },
     )
-    return result if isinstance(result, list) else []
+    searches = result if isinstance(result, list) else []
+    now = datetime.utcnow().astimezone()
+    for search in searches:
+        last_scraped_at = parse_iso_timestamp(search.get("last_scraped_at"))
+        search["updated_recently"] = bool(
+            last_scraped_at and (now - last_scraped_at.astimezone()).total_seconds() <= 15 * 60
+        )
+    return searches
 
 
 def fetch_saved_search(config: SupabaseReadConfig, saved_search_id: int) -> dict[str, Any] | None:
@@ -194,7 +220,9 @@ def fetch_active_listings(config: SupabaseReadConfig, saved_search_id: int) -> l
             "order": "is_new_in_run.desc,price.asc.nullslast,listing_id.asc",
         },
     )
-    return result if isinstance(result, list) else []
+    listings = result if isinstance(result, list) else []
+    merge_listing_media(config, listings)
+    return listings
 
 
 def fetch_active_listing_detail(
@@ -217,8 +245,52 @@ def fetch_active_listing_detail(
         },
     )
     if isinstance(result, list) and result:
-        return result[0]
+        listing = result[0]
+        merge_listing_media(config, [listing])
+        return listing
     return None
+
+
+def fetch_listing_media(config: SupabaseReadConfig, listing_ids: list[int]) -> dict[int, dict[str, Any]]:
+    unique_ids = sorted({listing_id for listing_id in listing_ids if listing_id})
+    if not unique_ids:
+        return {}
+
+    result = supabase_get(
+        config,
+        "listings",
+        query={
+            "id": f"in.({','.join(str(listing_id) for listing_id in unique_ids)})",
+            "select": "id,raw_listing",
+        },
+    )
+    rows = result if isinstance(result, list) else []
+    media_by_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        raw_listing = row.get("raw_listing") if isinstance(row, dict) else None
+        photo_urls = raw_listing.get("photo_urls") if isinstance(raw_listing, dict) else None
+        if not isinstance(photo_urls, list):
+            photo_urls = []
+        cleaned_urls = [url for url in photo_urls if isinstance(url, str) and url.strip()]
+        primary_photo_url = raw_listing.get("primary_photo_url") if isinstance(raw_listing, dict) else None
+        if not primary_photo_url and cleaned_urls:
+            primary_photo_url = cleaned_urls[0]
+        media_by_id[row["id"]] = {
+            "photo_urls": cleaned_urls[:6],
+            "primary_photo_url": primary_photo_url,
+        }
+    return media_by_id
+
+
+def merge_listing_media(config: SupabaseReadConfig, listings: list[dict[str, Any]]) -> None:
+    media_by_id = fetch_listing_media(
+        config,
+        [listing.get("listing_id") for listing in listings if isinstance(listing, dict)],
+    )
+    for listing in listings:
+        media = media_by_id.get(listing.get("listing_id"), {})
+        listing["photo_urls"] = media.get("photo_urls", [])
+        listing["primary_photo_url"] = media.get("primary_photo_url")
 
 
 def build_scrape_args(form_data) -> list[str]:
