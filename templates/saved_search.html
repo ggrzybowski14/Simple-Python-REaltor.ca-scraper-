@@ -8,8 +8,7 @@
     <p class="eyebrow">Saved Search Detail</p>
     <h1>{{ saved_search.name }}</h1>
     <p class="hero-copy">
-      Current active listings for this saved search are read from the lifecycle-aware view
-      <code>current_active_saved_search_listings</code>.
+      Review all scraped listings, run a simple buy box, and split the results into matched and unmatched buckets.
     </p>
   </div>
   <div class="hero-metrics">
@@ -22,8 +21,12 @@
       <strong>{{ active_listings|length }}</strong>
     </div>
     <div class="metric-card">
-      <span class="metric-label">Realtor Visible Results</span>
-      <strong>{{ latest_run.results_count if latest_run and latest_run.results_count is not none else 'Unknown' }}</strong>
+      <span class="metric-label">Matched</span>
+      <strong>{{ matched_listings|length if buy_box.applied else '—' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Maybe</span>
+      <strong>{{ maybe_listings|length if buy_box.applied else '—' }}</strong>
     </div>
     <div class="metric-card">
       <span class="metric-label">Last Scrape</span>
@@ -32,24 +35,24 @@
   </div>
 </section>
 
-<section class="content-grid lower-grid">
+<section class="buy-box-grid">
   <div class="panel">
     <div class="panel-header">
-      <p class="eyebrow">Active Listings</p>
+      <p class="eyebrow">Scraped Listings</p>
       <h2>{{ active_listings|length }} listing(s)</h2>
     </div>
     {% if active_listings %}
-    <div class="card-list">
+    <div class="card-list scroll-column">
       {% for listing in active_listings %}
       <article class="info-card listing-card">
         {% if listing.primary_photo_url %}
-        <a class="listing-thumb-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">
+        <a class="listing-thumb-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">
           <img class="listing-thumb" src="{{ listing.primary_photo_url }}" alt="Primary photo for {{ listing.address }}">
         </a>
         {% endif %}
         <div class="card-topline">
           <h3>
-            <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">
+            <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">
               {{ listing.address }}
             </a>
           </h3>
@@ -63,16 +66,7 @@
           Baths: {{ listing.bathrooms or 'N/A' }} |
           {{ listing.property_type or listing.building_type or 'Unknown type' }}
         </p>
-        <p class="meta-line">
-          {{ listing.square_feet or 'No sqft' }} |
-          {{ listing.land_size or 'No lot size' }} |
-          Built: {{ listing.built_in or 'N/A' }}
-        </p>
-        <p class="meta-line">
-          Results page {{ listing.results_page or '?' }} | Last seen {{ listing.last_seen_at }}
-        </p>
-        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}">View scraped details</a>
-        <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing</a>
+        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">View scraped details</a>
       </article>
       {% endfor %}
     </div>
@@ -81,11 +75,155 @@
     {% endif %}
   </div>
 
+  <div class="panel panel-form">
+    <div class="panel-header">
+      <p class="eyebrow">Buy Box</p>
+      <h2>Run structured and AI filters</h2>
+    </div>
+    <form method="get" action="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}" class="scrape-form">
+      <input type="hidden" name="apply_buy_box" value="1">
+      <label>
+        <span>Max price</span>
+        <input type="number" name="buy_box_max_price" min="0" step="1000" value="{{ buy_box.max_price or '' }}">
+      </label>
+      <label>
+        <span>Minimum beds</span>
+        <input type="number" name="buy_box_beds_min" min="0" value="{{ buy_box.beds_min or '' }}">
+      </label>
+      <label>
+        <span>Property type</span>
+        <select name="buy_box_property_type">
+          <option value="">Any</option>
+          {% for option in property_type_options %}
+          <option value="{{ option }}" {% if buy_box.property_type == option %}selected{% endif %}>{{ option.title() }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Required keywords in description</span>
+        <textarea name="buy_box_keywords" rows="5" placeholder="suite, mortgage helper, carriage house">{{ buy_box.required_keywords_raw }}</textarea>
+      </label>
+      <label>
+        <span>AI interpretation goal</span>
+        <textarea
+          name="buy_box_ai_goal"
+          rows="6"
+          placeholder="Example: Find listings that likely include a separate suite, in-law suite, or strong suite potential for rental income. Ignore references to an ensuite bathroom."
+        >{{ buy_box.ai_goal_raw }}</textarea>
+      </label>
+      <p class="meta-line">
+        Use this for fuzzy criteria that keyword matching misses, such as secondary suite or rental-income potential.
+      </p>
+      <button type="submit" class="button-primary">Run buy box</button>
+      {% if buy_box.applied %}
+      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Clear buy box</a>
+      {% endif %}
+    </form>
+  </div>
+
   <div class="panel">
     <div class="panel-header">
-      <p class="eyebrow">Recent Runs</p>
-      <h2>History for this search</h2>
+      <p class="eyebrow">Buy Box Results</p>
+      <h2>{% if buy_box.applied %}Passed and failed{% else %}Run the buy box{% endif %}</h2>
     </div>
+    {% if buy_box.applied %}
+    {% if buy_box.ai_goal_raw %}
+    <div class="buy-box-ai-summary">
+      <p class="eyebrow">AI Criterion</p>
+      <p class="meta-line">{{ buy_box.ai_goal_raw }}</p>
+      {% if buy_box_ai_error %}
+      <p class="ai-error">{{ buy_box_ai_error }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
+    <div class="buy-box-results">
+      <section class="result-bucket">
+        <div class="bucket-header">
+          <h3>Matched</h3>
+          <span class="pill status-succeeded">{{ matched_listings|length }}</span>
+        </div>
+        {% if matched_listings %}
+        <div class="card-list">
+          {% for listing in matched_listings %}
+          <article class="info-card buy-box-card matched-card">
+            <div class="card-topline">
+              <h3><a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">{{ listing.address }}</a></h3>
+              {% if listing.ai_buy_box_verdict %}
+              <span class="pill ai-pill ai-{{ listing.ai_buy_box_verdict }}">{{ listing.ai_buy_box_verdict|title }}</span>
+              {% endif %}
+            </div>
+            <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
+            <p class="meta-line">{{ listing.buy_box_reasons|join(' | ') }}</p>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No listings matched the current buy box.</p>
+        {% endif %}
+      </section>
+
+      <section class="result-bucket">
+        <div class="bucket-header">
+          <h3>Maybe</h3>
+          <span class="pill ai-pill ai-maybe">{{ maybe_listings|length }}</span>
+        </div>
+        {% if maybe_listings %}
+        <div class="card-list">
+          {% for listing in maybe_listings %}
+          <article class="info-card buy-box-card maybe-card">
+            <div class="card-topline">
+              <h3><a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">{{ listing.address }}</a></h3>
+              {% if listing.ai_buy_box_verdict %}
+              <span class="pill ai-pill ai-{{ listing.ai_buy_box_verdict }}">{{ listing.ai_buy_box_verdict|title }}</span>
+              {% endif %}
+            </div>
+            <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
+            <p class="meta-line">{{ listing.buy_box_reasons|join(' | ') }}</p>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No listings landed in the maybe bucket.</p>
+        {% endif %}
+      </section>
+
+      <section class="result-bucket">
+        <div class="bucket-header">
+          <h3>Unmatched</h3>
+          <span class="pill status-failed">{{ unmatched_listings|length }}</span>
+        </div>
+        {% if unmatched_listings %}
+        <div class="card-list">
+          {% for listing in unmatched_listings %}
+          <article class="info-card buy-box-card unmatched-card">
+            <div class="card-topline">
+              <h3><a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">{{ listing.address }}</a></h3>
+              {% if listing.ai_buy_box_verdict %}
+              <span class="pill ai-pill ai-{{ listing.ai_buy_box_verdict }}">{{ listing.ai_buy_box_verdict|title }}</span>
+              {% endif %}
+            </div>
+            <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
+            <p class="meta-line">{{ listing.buy_box_reasons|join(' | ') }}</p>
+          </article>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No listings failed the current buy box.</p>
+        {% endif %}
+      </section>
+    </div>
+    {% else %}
+    <p class="empty-state">Set the buy-box rules in the middle column, then run them to split this saved search into matched and unmatched buckets.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="lower-grid">
+  <details class="panel collapsible-panel">
+    <summary>
+      <span class="eyebrow">Recent Runs</span>
+      <strong>History for this search</strong>
+    </summary>
     {% if scrape_runs %}
     <table class="data-table">
       <thead>
@@ -114,6 +252,6 @@
     {% else %}
     <p class="empty-state">No scrape history recorded yet.</p>
     {% endif %}
-  </div>
+  </details>
 </section>
 {% endblock %}

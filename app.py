@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import uuid
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,12 +27,25 @@ DEFAULT_DETAIL_CONCURRENCY = 2
 PROPERTY_TYPE_OPTIONS = ["house", "apartment", "condo"]
 SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
+AI_BUY_BOX_CACHE: dict[str, dict[str, str]] = {}
 
 
 @dataclass
 class SupabaseReadConfig:
     url: str
     key: str
+
+
+def parse_optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        return int(cleaned.replace(",", ""))
+    except ValueError:
+        return None
 
 
 def parse_iso_timestamp(value: str | None) -> datetime | None:
@@ -42,6 +56,277 @@ def parse_iso_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def parse_price_amount(value: str | None) -> int | None:
+    if not value:
+        return None
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return int(digits) if digits else None
+
+
+def normalize_keyword_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    raw_parts = [part.strip().lower() for part in value.replace("\n", ",").split(",")]
+    return [part for part in raw_parts if part]
+
+
+def build_buy_box_criteria(args, saved_search: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "max_price": parse_optional_int(args.get("buy_box_max_price")) if args.get("apply_buy_box") else saved_search.get("max_price"),
+        "beds_min": parse_optional_int(args.get("buy_box_beds_min")) if args.get("apply_buy_box") else saved_search.get("beds_min"),
+        "property_type": (args.get("buy_box_property_type") or "").strip().lower() or (saved_search.get("property_type") or ""),
+        "required_keywords_raw": (args.get("buy_box_keywords") or "").strip(),
+        "required_keywords": normalize_keyword_list(args.get("buy_box_keywords") or ""),
+        "ai_goal_raw": (args.get("buy_box_ai_goal") or "").strip(),
+        "ai_enabled": bool((args.get("buy_box_ai_goal") or "").strip()),
+        "applied": bool(args.get("apply_buy_box")),
+    }
+
+
+def analyze_listing_against_buy_box(listing: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any]:
+    reasons: list[str] = []
+    listing_price = parse_price_amount(listing.get("price"))
+    listing_beds = listing.get("bedrooms")
+    listing_type_parts = [
+        (listing.get("property_type") or "").strip().lower(),
+        (listing.get("building_type") or "").strip().lower(),
+    ]
+    listing_type = " ".join(part for part in listing_type_parts if part)
+    description = (listing.get("listing_description") or "").lower()
+
+    if criteria.get("max_price") is not None:
+        if listing_price is None:
+            reasons.append("Missing price")
+        elif listing_price > criteria["max_price"]:
+            reasons.append(f"Price exceeds ${criteria['max_price']:,}")
+
+    if criteria.get("beds_min") is not None:
+        if listing_beds is None:
+            reasons.append("Missing bedroom count")
+        elif listing_beds < criteria["beds_min"]:
+            reasons.append(f"Fewer than {criteria['beds_min']} beds")
+
+    if criteria.get("property_type"):
+        expected_type = criteria["property_type"]
+        property_type_aliases = {
+            "house": ["house", "single family"],
+            "apartment": ["apartment"],
+            "condo": ["condo", "apartment"],
+        }
+        aliases = property_type_aliases.get(expected_type, [expected_type])
+        if not any(alias in listing_type for alias in aliases):
+            reasons.append(f"Type is not {expected_type}")
+
+    missing_keywords = [
+        keyword for keyword in criteria.get("required_keywords", [])
+        if keyword not in description
+    ]
+    if missing_keywords:
+        reasons.append(f"Missing keywords: {', '.join(missing_keywords)}")
+
+    return {
+        "matched": not reasons,
+        "reasons": reasons or ["Matches all buy-box rules"],
+    }
+
+
+def build_ai_buy_box_cache_key(goal: str, listing: dict[str, Any]) -> str:
+    payload = "\n".join(
+        [
+            goal.strip(),
+            str(listing.get("listing_id") or ""),
+            listing.get("address") or "",
+            listing.get("listing_description") or "",
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def call_openai_buy_box_assessment(goal: str, listings: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not listings:
+        return {}
+
+    model = os.getenv("OPENAI_BUY_BOX_MODEL", "gpt-5.4-mini")
+    user_payload = {
+        "goal": goal,
+        "listings": [
+            {
+                "listing_id": listing["listing_id"],
+                "address": listing.get("address"),
+                "description": listing.get("listing_description") or "",
+            }
+            for listing in listings
+        ],
+    }
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You analyze scraped real-estate listing descriptions for investment screening. "
+                    "Assess whether each listing satisfies the user's qualitative criterion. "
+                    "Return only structured JSON."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(user_payload),
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "buy_box_ai_assessment",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "assessments": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "listing_id": {"type": "integer"},
+                                    "verdict": {"type": "string", "enum": ["likely", "maybe", "no"]},
+                                    "reason": {"type": "string"},
+                                },
+                                "required": ["listing_id", "verdict", "reason"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["assessments"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    }
+
+    req = request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=60) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI request failed with status {exc.code}: {details}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"OpenAI request failed: {exc.reason}") from exc
+
+    payload = json.loads(raw)
+    content = payload["choices"][0]["message"]["content"]
+    parsed = json.loads(content)
+    assessment_by_listing_id: dict[int, dict[str, str]] = {}
+    for item in parsed.get("assessments", []):
+        listing_id = item.get("listing_id")
+        verdict = item.get("verdict")
+        reason = item.get("reason")
+        if isinstance(listing_id, int) and isinstance(verdict, str) and isinstance(reason, str):
+            assessment_by_listing_id[listing_id] = {"verdict": verdict, "reason": reason}
+    return assessment_by_listing_id
+
+
+def apply_ai_buy_box(goal: str, listings: list[dict[str, Any]]) -> tuple[dict[int, dict[str, str]], str | None]:
+    if not goal.strip():
+        return {}, None
+    if not os.getenv("OPENAI_API_KEY"):
+        return {}, "OPENAI_API_KEY is not configured for AI buy-box analysis."
+
+    cached_results: dict[int, dict[str, str]] = {}
+    uncached_listings: list[dict[str, Any]] = []
+    uncached_keys: dict[int, str] = {}
+
+    for listing in listings:
+        cache_key = build_ai_buy_box_cache_key(goal, listing)
+        cached = AI_BUY_BOX_CACHE.get(cache_key)
+        if cached:
+            cached_results[listing["listing_id"]] = cached
+        else:
+            uncached_listings.append(listing)
+            uncached_keys[listing["listing_id"]] = cache_key
+
+    if uncached_listings:
+        fresh_results = call_openai_buy_box_assessment(goal, uncached_listings)
+        for listing_id, result in fresh_results.items():
+            cache_key = uncached_keys.get(listing_id)
+            if cache_key:
+                AI_BUY_BOX_CACHE[cache_key] = result
+        cached_results.update(fresh_results)
+
+    return cached_results, None
+
+
+def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dict[str, Any]) -> dict[str, Any]:
+    structured_matches: list[dict[str, Any]] = []
+    structured_unmatched: list[dict[str, Any]] = []
+
+    for listing in active_listings:
+        result = analyze_listing_against_buy_box(listing, criteria)
+        enriched_listing = dict(listing)
+        enriched_listing["buy_box_match"] = result["matched"]
+        enriched_listing["buy_box_reasons"] = result["reasons"]
+        if result["matched"]:
+            structured_matches.append(enriched_listing)
+        else:
+            structured_unmatched.append(enriched_listing)
+
+    ai_results: dict[int, dict[str, str]] = {}
+    ai_error: str | None = None
+    if criteria.get("applied") and criteria.get("ai_goal_raw"):
+        try:
+            ai_results, ai_error = apply_ai_buy_box(criteria["ai_goal_raw"], structured_matches)
+        except Exception as exc:
+            ai_error = str(exc)
+
+    matched: list[dict[str, Any]] = []
+    maybe: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = list(structured_unmatched)
+
+    for listing in structured_matches:
+        if criteria.get("applied") and criteria.get("ai_goal_raw"):
+            ai_result = ai_results.get(listing["listing_id"])
+            if ai_result:
+                listing["ai_buy_box_verdict"] = ai_result["verdict"]
+                listing["ai_buy_box_reason"] = ai_result["reason"]
+                if ai_result["verdict"] == "likely":
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: likely - {ai_result['reason']}"]
+                    matched.append(listing)
+                elif ai_result["verdict"] == "maybe":
+                    listing["buy_box_match"] = False
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: maybe - {ai_result['reason']}"]
+                    maybe.append(listing)
+                else:
+                    listing["buy_box_match"] = False
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: {ai_result['verdict']} - {ai_result['reason']}"]
+                    unmatched.append(listing)
+            else:
+                if ai_error:
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI unavailable: {ai_error}"]
+                    matched.append(listing)
+                else:
+                    listing["buy_box_match"] = False
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + ["AI analysis unavailable"]
+                    unmatched.append(listing)
+        else:
+            matched.append(listing)
+
+    return {
+        "matched": matched,
+        "maybe": maybe,
+        "unmatched": unmatched,
+        "ai_error": ai_error,
+    }
 
 
 def create_app() -> Flask:
@@ -83,14 +368,23 @@ def create_app() -> Flask:
         if saved_search is None:
             abort(404)
         active_listings = fetch_active_listings(config, saved_search_id)
+        buy_box = build_buy_box_criteria(flask_request.args, saved_search)
+        analysis = analyze_active_listings(active_listings, buy_box)
         scrape_runs = fetch_recent_runs(config, saved_search_id=saved_search_id)
         latest_run = scrape_runs[0] if scrape_runs else None
         return render_template(
             "saved_search.html",
             saved_search=saved_search,
             active_listings=active_listings,
+            buy_box=buy_box,
+            matched_listings=analysis["matched"],
+            maybe_listings=analysis["maybe"],
+            unmatched_listings=analysis["unmatched"],
+            buy_box_ai_error=analysis["ai_error"],
             scrape_runs=scrape_runs,
             latest_run=latest_run,
+            property_type_options=PROPERTY_TYPE_OPTIONS,
+            current_query=flask_request.query_string.decode("utf-8"),
         )
 
     @app.route("/saved-searches/<int:saved_search_id>/listings/<int:listing_id>")
@@ -106,6 +400,7 @@ def create_app() -> Flask:
             "listing_detail.html",
             saved_search=saved_search,
             listing=listing,
+            back_query=flask_request.query_string.decode("utf-8"),
         )
 
     @app.route("/scrapes", methods=["POST"])
@@ -215,6 +510,7 @@ def fetch_active_listings(config: SupabaseReadConfig, saved_search_id: int) -> l
             "select": (
                 "saved_search_id,listing_id,address,price,bedrooms,bathrooms,property_type,"
                 "building_type,square_feet,land_size,built_in,annual_taxes,hoa_fees,"
+                "listing_description,"
                 "time_on_realtor,zoning_type,url,results_page,is_new_in_run,last_seen_at"
             ),
             "order": "is_new_in_run.desc,price.asc.nullslast,listing_id.asc",

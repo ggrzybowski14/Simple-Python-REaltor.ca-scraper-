@@ -1,10 +1,10 @@
-# Realtor.ca Scraper Foundation
+# Realtor.ca Scraper And Local Analyzer
 
 This repository started as a small proof of concept built to answer one question:
 
 Can a visible Python Playwright browser with stealth and light human-like behavior accept search inputs, drive Realtor.ca's filters, and scrape matching listing data?
 
-That proof of concept is now working well enough to serve as the foundation for a larger real-estate analyzer application.
+That proof of concept now serves as the foundation for a local real-estate analyzer application.
 
 Current state:
 
@@ -14,10 +14,11 @@ Current state:
 - Phase 1 Supabase model working: saved searches, scrape runs, canonical listings, and run history
 - Light lifecycle handling implemented: active listings per saved search plus `is_new_in_run`
 - Remaining Phase 1 follow-up: prove the inactive-listing transition with a controlled rerun
-- Local website scaffold added: dashboard, saved search detail view, and background scrape launch
+- Local website working: dashboard, saved search detail view, listing detail, photo gallery, and background scrape launch
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
-- Next active step: iterate on the local website on top of the validated scraper and data foundation
+- Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
+- Next active step: make the listing-review and buy-box workflow more useful
 
 ## What It Does Today
 
@@ -38,19 +39,20 @@ Current state:
 - Saves a screenshot and HTML snapshot on failure
 - Saves JSON output that includes the search criteria used for the run
 - Automatically upserts listings into Supabase after a successful scrape when local Supabase credentials are present
+- Serves a local website for browsing active listings and running buy-box filters
+- Supports an AI interpretation goal for fuzzy listing-description criteria such as secondary suite potential
 
 ## What It Is Not Yet
 
 This is not yet:
 
-- a local website
 - a finished listing-analysis product
-- a buy-box evaluation engine
+- a polished multi-step investment analyzer
 - a market fundamentals analyzer
 - a multi-user application
-- a polished full website workflow
+- a deployed production website
 
-The repository is currently the scraper and ingestion foundation for those later layers.
+The repository is currently a working local-first scraper, ingestion layer, and early listing-analysis tool.
 
 ## Setup
 
@@ -90,7 +92,7 @@ python scraper.py \
 python app.py
 ```
 
-Then open `http://127.0.0.1:5000`.
+Then open `http://127.0.0.1:5000` unless you are using a different local port during development.
 
 ## Supabase
 
@@ -170,9 +172,9 @@ Lifecycle status:
 - `is_new_in_run` is now tracked per scrape run
 - the explicit inactive transition still needs a controlled verification run against the same saved-search context
 
-## Local Website Scaffold
+## Local Website
 
-The repository now includes a first local website scaffold in [app.py](/Users/georgia/Projects/simple realtor.ca scraper python/app.py:1).
+The repository now includes a working local website in [app.py](/Users/georgia/Projects/simple realtor.ca scraper python/app.py:1).
 
 Current website scope:
 
@@ -183,16 +185,21 @@ Current website scope:
 - local form to launch a new headed scrape in the background
 - local job detail page with basic log output
 - listing detail page with photo gallery and richer scraped fields
+- buy-box workspace with:
+  - all scraped listings
+  - structured filters
+  - AI interpretation goal
+  - `matched`, `maybe`, and `unmatched` result buckets
 
 Current website limitations:
 
 - no authentication
 - no persistent job queue beyond the current local app process
-- no inline listing analysis yet
 - no edit/delete workflow for saved searches yet
 - no polished error handling yet
 - no dedicated run comparison or retry UX yet
 - no explicit “why this listing was reused vs re-scraped” UI yet
+- buy-box settings are not yet saved per saved search
 
 ## Product Direction
 
@@ -202,7 +209,8 @@ The intended product direction is:
 2. scrape all active listings matching that saved search
 3. store both the current listing state and scrape history
 4. show current active listings in a local application
-5. later evaluate those listings against buy-box criteria
+5. evaluate those listings against buy-box criteria
+6. later add review workflow, notes, and shortlist behavior
 
 Important scope clarifications:
 
@@ -221,22 +229,21 @@ What is now done:
 - redesigned the Supabase model to preserve scrape history without duplicating canonical listing rows
 - added a clean current active-listings view for future UI work
 - validated the headed scraper plus Supabase persistence end to end
+- added the first AI-assisted buy-box pass for ambiguous listing-description criteria
 
 Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
-- continue Phase 2 UX iteration around run visibility, run status, and listing workflow
+- persist buy-box settings per saved search
+- add buy-box verdict/reason visibility on the listing detail page
+- add simple listing workflow actions such as shortlist / ignore / notes
 
 Planned direction after that:
 
-1. continue Phase 2 website iteration on top of the current scaffold
-2. improve Phase 2 run UX:
-   - clearer run status
-   - clearer saved-search update indicators
-   - better recent-run visibility from the dashboard
-3. small follow-up on lifecycle verification if still needed during website work
-4. Phase 3: listing analysis and buy-box filtering
-5. later: workflow refinements and optional market-analysis features
+1. continue Phase 3 listing-analysis iteration
+2. add Phase 4 workflow refinements
+3. keep only high-value Phase 2 UX improvements
+4. later: optional market-analysis features
 
 See [PROJECT_OVERVIEW.md](/Users/georgia/Projects/simple realtor.ca scraper python/PROJECT_OVERVIEW.md:1) for the fuller roadmap and phase definitions.
 

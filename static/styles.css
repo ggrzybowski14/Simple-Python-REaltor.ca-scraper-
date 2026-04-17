@@ -138,6 +138,13 @@ code {
   margin-top: 1.5rem;
 }
 
+.buy-box-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr 1.15fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
 .panel {
   border-radius: 24px;
   padding: 1.35rem;
@@ -174,6 +181,16 @@ select {
   background: #fff;
 }
 
+textarea {
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font: inherit;
+  resize: vertical;
+}
+
 .advanced-box {
   border: 1px dashed var(--line);
   border-radius: 18px;
@@ -198,6 +215,12 @@ select {
 .card-list {
   display: grid;
   gap: 1rem;
+}
+
+.scroll-column {
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .compact .info-card {
@@ -306,6 +329,64 @@ select {
   font-weight: 700;
 }
 
+.buy-box-results {
+  display: grid;
+  gap: 1rem;
+}
+
+.buy-box-ai-summary {
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  background: var(--surface-strong);
+}
+
+.ai-error {
+  margin: 0.5rem 0 0;
+  color: #8a2525;
+  font-weight: 700;
+}
+
+.bucket-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.matched-card {
+  border: 1px solid rgba(47, 107, 79, 0.28);
+}
+
+.maybe-card {
+  border: 1px solid rgba(182, 122, 38, 0.24);
+}
+
+.unmatched-card {
+  border: 1px solid rgba(138, 37, 37, 0.24);
+}
+
+.ai-pill {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-likely {
+  background: rgba(47, 107, 79, 0.12);
+  color: var(--green);
+}
+
+.ai-maybe {
+  background: rgba(182, 122, 38, 0.14);
+  color: #8b4f0d;
+}
+
+.ai-no {
+  background: rgba(138, 37, 37, 0.12);
+  color: #8a2525;
+}
+
 .external-link {
   display: inline-block;
   margin-top: 0.9rem;
@@ -358,6 +439,10 @@ select {
   margin-bottom: 1rem;
 }
 
+.detail-query-hint {
+  margin-top: 0.9rem;
+}
+
 .photo-panel {
   margin-bottom: 1.5rem;
 }
@@ -389,6 +474,20 @@ select {
   border-radius: 14px;
   display: block;
   background: var(--surface-strong);
+}
+
+.collapsible-panel summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 1rem;
+}
+
+.collapsible-panel summary::-webkit-details-marker {
+  display: none;
 }
 
 .data-table {
@@ -424,7 +523,8 @@ select {
 
 @media (max-width: 980px) {
   .content-grid,
-  .compact-hero {
+  .compact-hero,
+  .buy-box-grid {
     grid-template-columns: 1fr;
   }
 

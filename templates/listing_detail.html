@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="detail-back-row">
-  <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
+  <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}{% if back_query %}?{{ back_query }}{% endif %}">Back to saved search</a>
 </div>
 
 <section class="hero-card compact-hero">
@@ -82,6 +82,9 @@
     <div class="description-block">
       {{ listing.listing_description or 'No listing description was scraped for this property yet.' }}
     </div>
+    {% if back_query %}
+    <p class="meta-line detail-query-hint">This detail page preserves your current saved-search buy-box state when you go back.</p>
+    {% endif %}
     <div class="detail-actions">
       <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing on Realtor.ca</a>
     </div>
