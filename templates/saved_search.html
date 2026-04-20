@@ -10,6 +10,16 @@
     <p class="hero-copy">
       Review all scraped listings, run a simple buy box, and split the results into matched and unmatched buckets.
     </p>
+    <div class="card-actions">
+      <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="inline-form">
+        <button type="submit" class="button-secondary">Update Search</button>
+      </form>
+      {% if sparse_listing_count %}
+      <form method="post" action="{{ url_for('retry_sparse_details', saved_search_id=saved_search.id) }}" class="inline-form">
+        <button type="submit" class="button-secondary">Retry Sparse Details</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
   <div class="hero-metrics">
     <div class="metric-card">
@@ -17,8 +27,16 @@
       <strong>{{ saved_search.location }}</strong>
     </div>
     <div class="metric-card">
-      <span class="metric-label">Active Scraped</span>
+      <span class="metric-label">Active Listings</span>
       <strong>{{ active_listings|length }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Results Count</span>
+      <strong>{{ latest_run.results_count if latest_run and latest_run.results_count is not none else '—' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Collected Count</span>
+      <strong>{{ latest_run.summary_count if latest_run and latest_run.summary_count is not none else '—' }}</strong>
     </div>
     <div class="metric-card">
       <span class="metric-label">Matched</span>
@@ -41,6 +59,12 @@
       <p class="eyebrow">Scraped Listings</p>
       <h2>{{ active_listings|length }} listing(s)</h2>
     </div>
+    {% if new_listing_count %}
+    <p class="meta-line">{{ new_listing_count }} new listing{{ '' if new_listing_count == 1 else 's' }} in the latest update.</p>
+    {% endif %}
+    {% if sparse_listing_count %}
+    <p class="meta-line">{{ sparse_listing_count }} listing{{ '' if sparse_listing_count == 1 else 's' }} still missing detailed fields.</p>
+    {% endif %}
     {% if active_listings %}
     <div class="card-list scroll-column">
       {% for listing in active_listings %}
@@ -57,7 +81,7 @@
             </a>
           </h3>
           {% if listing.is_new_in_run %}
-          <span class="pill accent">New in run</span>
+          <span class="pill accent">New this update</span>
           {% endif %}
         </div>
         <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
@@ -116,7 +140,7 @@
       </p>
       <button type="submit" class="button-primary">Run buy box</button>
       {% if buy_box.applied %}
-      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Clear buy box</a>
+      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear buy box</a>
       {% endif %}
     </form>
   </div>
@@ -127,15 +151,23 @@
       <h2>{% if buy_box.applied %}Passed and failed{% else %}Run the buy box{% endif %}</h2>
     </div>
     {% if buy_box.applied %}
-    {% if buy_box.ai_goal_raw %}
     <div class="buy-box-ai-summary">
-      <p class="eyebrow">AI Criterion</p>
-      <p class="meta-line">{{ buy_box.ai_goal_raw }}</p>
+      <p class="eyebrow">Current Buy Box</p>
+      <p class="meta-line">
+        Max price: {{ ("$" ~ "{:,}".format(buy_box.max_price)) if buy_box.max_price is not none else "Any" }} |
+        Beds: {{ buy_box.beds_min if buy_box.beds_min is not none else "Any" }}+ |
+        Type: {{ buy_box.property_type|title if buy_box.property_type else "Any" }}
+      </p>
+      <p class="meta-line">
+        Keywords: {{ buy_box.required_keywords_raw if buy_box.required_keywords_raw else "None" }}
+      </p>
+      <p class="meta-line">
+        AI goal: {{ buy_box.ai_goal_raw if buy_box.ai_goal_raw else "None saved" }}
+      </p>
       {% if buy_box_ai_error %}
       <p class="ai-error">{{ buy_box_ai_error }}</p>
       {% endif %}
     </div>
-    {% endif %}
     <div class="buy-box-results">
       <section class="result-bucket">
         <div class="bucket-header">

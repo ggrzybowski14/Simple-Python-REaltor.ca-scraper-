@@ -53,8 +53,11 @@ The local website currently provides:
 - latest-run indicator on the saved search updated most recently
 - background launch of headed scrape jobs
 - saved-search detail page with all active scraped listings
+- saved-search hero metrics for active listings, site results count, and collected count
 - listing detail page with richer fields and photo gallery
 - collapsible recent-run history
+- persisted buy-box settings per saved search
+- targeted retry of sparse listing details
 
 ### Buy Box
 
@@ -161,15 +164,19 @@ Completed:
 - saved-search detail page
 - listing detail page
 - local scrape launch
+- local sparse-detail retry action
 - latest-run indicator
+- latest-run result metrics
 - listing photo gallery
 - preserved buy-box query state when navigating into and back out of a listing
+- saved buy-box persistence and listing-detail verdict display
 
 Still rough:
 
 - local dev-server refresh/restart flow can be confusing when an older Flask process is still running
 - run-management UX is basic
 - there is no persistent background worker or polished queue
+- active-set churn is still hard to interpret when Realtor result counts fluctuate between runs
 
 Phase 2 should now focus only on improvements that materially help the listing-review workflow.
 
@@ -183,13 +190,16 @@ Completed:
 - pass/fail evaluation
 - AI interpretation goal for ambiguous listing-description criteria
 - `matched`, `maybe`, and `unmatched` buckets
+- persisted buy-box settings per saved search
+- listing-detail buy-box verdict and reasoning
+- stricter detached-house filtering in app logic so duplex/townhouse rows are excluded from `house`
 
 Immediate next opportunities:
 
-- show buy-box verdict and AI reasoning on the listing detail page
-- save one buy box per saved search instead of relying only on query-string state
+- keep improving result-set stability before more workflow features are layered on top
 - add excluded keywords
 - add simple review workflow states such as shortlist / ignore / notes
+- add clearer run comparison for listings that are new to the current collected set versus genuinely new on market
 
 ### Phase 4: Workflow Layer
 
@@ -209,8 +219,8 @@ The next work should favor real screening utility over more scaffolding.
 
 Highest-value likely next steps:
 
-1. persist buy-box settings per saved search
-2. show AI verdict and reasons on the listing detail page
+1. improve settled count stability and log the first-page result set more explicitly
+2. continue hardening pagination and page-state detection so collected results consistently match site results
 3. add shortlist / ignore / notes
 4. optionally refine the AI prompt and caching behavior based on real listing review
 
@@ -224,6 +234,7 @@ Lower-priority work for now:
 
 - Headed Playwright runs can still be flaky on the local machine, especially when Chrome for Testing crashes or an old Flask server keeps serving stale code
 - AI-assisted buy-box results are only as good as the prompt and listing description quality
-- Some Realtor.ca result-count differences can still come from map-state or boundary behavior
+- Realtor.ca can still show transient or stale result counts before the page fully settles
+- Pagination controls on Realtor.ca are inconsistent enough that continued defensive handling is warranted
 
 These are known issues, but the current system is already usable enough to keep building on.

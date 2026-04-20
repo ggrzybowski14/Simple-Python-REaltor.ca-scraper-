@@ -18,7 +18,9 @@ Current state:
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
-- Next active step: make the listing-review and buy-box workflow more useful
+- Buy-box persistence working: one saved buy box per saved search, shown on both saved-search and listing-detail pages
+- Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
+- Next active step: stabilize settled result counts and continue review workflow improvements
 
 ## What It Does Today
 
@@ -35,12 +37,14 @@ Current state:
 - Extracts richer listing detail fields including full description, property type, building type, square footage, land size, built year, taxes, time on Realtor.ca, and zoning type
 - Extracts listing photos and stores a primary photo plus additional gallery images
 - Logs visible result-count and page-state diagnostics during broader runs
+- Tracks both site `results_count` and collected `summary_count` per run so pagination gaps are visible
 - Prints listing data to the terminal
 - Saves a screenshot and HTML snapshot on failure
 - Saves JSON output that includes the search criteria used for the run
 - Automatically upserts listings into Supabase after a successful scrape when local Supabase credentials are present
 - Serves a local website for browsing active listings and running buy-box filters
 - Supports an AI interpretation goal for fuzzy listing-description criteria such as secondary suite potential
+- Supports targeted retry of only sparse listing details instead of forcing a full rerun
 
 ## What It Is Not Yet
 
@@ -140,8 +144,11 @@ What is already working in the integrated flow:
 - the scraper can extract listing photos and persist them inside the stored raw listing payload
 - the browser-first headed Playwright plus `playwright-stealth` setup remained stable during larger runs
 - the scraper now starts from a neutral Realtor.ca map page rather than a Victoria-specific hard-coded map state
+- the scraper now runs location-based collection without relying on `Search within boundary`
+- the scraper now waits for a settled results state before collection and uses more robust page-2 navigation fallbacks
 - the scraper now persists data into `saved_searches`, `scrape_runs`, `listings`, and `scrape_run_listings`
 - the scraper now maintains a saved-search-specific active-listing view via `current_active_saved_search_listings`
+- the scraper now has a targeted sparse-detail retry script for repairing missing detail fields
 
 Example validated outcome:
 
@@ -181,8 +188,10 @@ Current website scope:
 - dashboard showing saved searches
 - recent scrape runs
 - saved-search detail page showing current active listings
+- latest run metrics showing active listings, site results count, and collected count
 - visual indicator for the saved search updated by the latest run
 - local form to launch a new headed scrape in the background
+- local action to retry only sparse listing details
 - local job detail page with basic log output
 - listing detail page with photo gallery and richer scraped fields
 - buy-box workspace with:
@@ -190,6 +199,8 @@ Current website scope:
   - structured filters
   - AI interpretation goal
   - `matched`, `maybe`, and `unmatched` result buckets
+- saved buy-box summary showing the currently persisted structured and AI criteria
+- buy-box verdict and AI reasoning on the listing-detail page
 
 Current website limitations:
 
@@ -199,7 +210,7 @@ Current website limitations:
 - no polished error handling yet
 - no dedicated run comparison or retry UX yet
 - no explicit “why this listing was reused vs re-scraped” UI yet
-- buy-box settings are not yet saved per saved search
+- site result counts can still fluctuate while Realtor.ca settles
 
 ## Product Direction
 
@@ -209,14 +220,23 @@ The intended product direction is:
 2. scrape all active listings matching that saved search
 3. store both the current listing state and scrape history
 4. show current active listings in a local application
-5. evaluate those listings against buy-box criteria
-6. later add review workflow, notes, and shortlist behavior
+5. evaluate those listings against a persisted buy box
+6. later add review workflow, notes, shortlist behavior, and explicit run comparison
 
 Important scope clarifications:
 
 - `saved search` and `buy box` are related but separate concepts
 - the current near-term goal is listing ingestion and listing analysis within a selected market
 - broader market fundamentals analysis is a later product area, not active implementation scope
+
+## Current Next Steps
+
+Highest-value next work from the current state:
+
+1. make settled site counts more reliable by improving post-filter stabilization and logging first-page URLs more clearly
+2. keep hardening pagination so `results_count` and `summary_count` stay aligned across repeated runs
+3. add workflow states such as shortlist / ignore / notes for reviewed listings
+4. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
 
 ## Next Active Work
 

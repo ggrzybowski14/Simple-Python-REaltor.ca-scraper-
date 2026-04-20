@@ -17,6 +17,7 @@ create table if not exists public.saved_searches (
     max_price integer,
     beds_min integer,
     property_type text,
+    -- search_snapshot.buy_box stores the persisted buy-box settings for this search
     search_snapshot jsonb not null default '{}'::jsonb,
     last_scraped_at timestamptz,
     is_active boolean not null default true,

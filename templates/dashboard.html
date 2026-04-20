@@ -79,10 +79,10 @@
     {% if saved_searches %}
     <div class="card-list">
       {% for search in saved_searches %}
-      <a class="info-card clickable" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">
+      <article class="info-card">
         <div class="card-topline">
           <h3>
-            {{ search.name }}
+            <a href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">{{ search.name }}</a>
             {% if search.updated_in_latest_run %}
             <span class="updated-indicator" title="Updated in latest run"></span>
             {% endif %}
@@ -103,7 +103,13 @@
           <span class="recently-updated-label">Updated in latest run</span>
           {% endif %}
         </p>
-      </a>
+        <div class="card-actions">
+          <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">Open search</a>
+          <form method="post" action="{{ url_for('update_saved_search', saved_search_id=search.id) }}" class="inline-form">
+            <button type="submit" class="button-secondary">Update Search</button>
+          </form>
+        </div>
+      </article>
       {% endfor %}
     </div>
     {% else %}

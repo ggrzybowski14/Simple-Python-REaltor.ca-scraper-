@@ -26,6 +26,7 @@ DEFAULT_DETAIL_CONCURRENCY = 2
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
 TOP_FILTER_WAIT_MS = 900
+RESULT_CARD_SELECTOR = "div.cardCon, article.cardCon"
 PROPERTY_TYPE_OPTIONS = {
     "house": {"value": "1", "label": "House"},
     "apartment": {"value": "17", "label": "Apartment"},
@@ -197,6 +198,19 @@ def normalize_property_type(value: str | None) -> str | None:
     return normalized
 
 
+def normalize_location_fragment(value: str | None) -> str:
+    compact = re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower())
+    return re.sub(r"\s+", " ", compact).strip()
+
+
+def address_matches_requested_location(address: str | None, requested_location: str) -> bool:
+    normalized_address = normalize_location_fragment(address)
+    normalized_requested = normalize_location_fragment(requested_location)
+    if not normalized_address or not normalized_requested:
+        return False
+    return normalized_requested in normalized_address
+
+
 def prompt_optional_int(label: str, current: int | None = None, *, prompt_enabled: bool = True) -> int | None:
     if current is not None:
         return current
@@ -313,7 +327,7 @@ def format_beds_option(value: int) -> str:
 
 
 async def wait_for_listings(page: Page) -> None:
-    cards = page.locator("div.cardCon, article.cardCon, .cardCon")
+    cards = page.locator(RESULT_CARD_SELECTOR)
     await cards.first.wait_for(state="visible", timeout=20000)
 
 
@@ -331,6 +345,49 @@ async def wait_for_results_refresh(page: Page, previous_url: str | None = None) 
     await wait_for_listings(page)
 
 
+async def snapshot_results_state(page: Page) -> tuple[int | None, str | None, tuple[str, ...]]:
+    results_count = await extract_results_count(page)
+    page_indicator = await extract_page_indicator(page)
+    links = page.locator(f"{RESULT_CARD_SELECTOR} a[href*='/real-estate/'], {RESULT_CARD_SELECTOR} a[href*='/real-estate-properties/']")
+    link_count = min(await links.count(), 12)
+    urls: list[str] = []
+    for index in range(link_count):
+        href = await links.nth(index).get_attribute("href")
+        if not href:
+            continue
+        urls.append(f"https://www.realtor.ca{href}" if href.startswith("/") else href)
+    return results_count, page_indicator, tuple(urls)
+
+
+async def wait_for_results_stabilization(page: Page) -> tuple[int | None, str | None]:
+    stable_samples = 0
+    previous_state: tuple[int | None, str | None, tuple[str, ...]] | None = None
+    last_state: tuple[int | None, str | None, tuple[str, ...]] | None = None
+
+    for _ in range(10):
+        state = await snapshot_results_state(page)
+        results_count, page_indicator, urls = state
+        logging.info(
+            "Results stabilization sample | results_count=%s | page_indicator=%s | first_urls=%s",
+            results_count if results_count is not None else "unknown",
+            page_indicator or "unknown",
+            len(urls),
+        )
+        if state == previous_state:
+            stable_samples += 1
+        else:
+            stable_samples = 0
+        previous_state = state
+        last_state = state
+        if stable_samples >= 2:
+            break
+        await page.wait_for_timeout(800)
+
+    if last_state is None:
+        return None, None
+    return last_state[0], last_state[1]
+
+
 async def extract_results_count(page: Page) -> int | None:
     body_text = await page.locator("body").inner_text()
     match = re.search(r"Results:\s*([\d,]+)\s+Listings", body_text, re.I)
@@ -345,6 +402,15 @@ async def extract_page_indicator(page: Page) -> str | None:
     if match:
         return f"{match.group(1)} of {match.group(2)}"
     return None
+
+
+def parse_page_indicator(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    match = re.search(r"(\d+)\s+of\s+(\d+)", value)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
 
 
 async def extract_rendered_property_type(page: Page) -> str | None:
@@ -385,7 +451,7 @@ async def log_results_snapshot(page: Page, label: str) -> None:
     page_indicator = await extract_page_indicator(page)
     rendered_property_type = await extract_rendered_property_type(page)
     rendered_location = await extract_rendered_location(page)
-    visible_cards = await page.locator("div.cardCon, article.cardCon, .cardCon").count()
+    visible_cards = await page.locator(RESULT_CARD_SELECTOR).count()
     logging.info(
         "%s | results_count=%s | page_indicator=%s | rendered_location=%s | rendered_property_type=%s | visible_cards=%s | url=%s",
         label,
@@ -1028,6 +1094,10 @@ def supabase_request(
 
 
 def ensure_saved_search(config: SupabaseConfig, payload: dict[str, Any], scraped_at: str) -> dict[str, Any]:
+    existing_saved_search = fetch_existing_saved_search(config, payload["saved_search_key"])
+    existing_snapshot = existing_saved_search.get("search_snapshot") if isinstance(existing_saved_search, dict) else {}
+    merged_snapshot = dict(existing_snapshot) if isinstance(existing_snapshot, dict) else {}
+    merged_snapshot.update(payload["search_criteria"])
     row = {
         "search_key": payload["saved_search_key"],
         "name": payload["saved_search_name"],
@@ -1036,7 +1106,7 @@ def ensure_saved_search(config: SupabaseConfig, payload: dict[str, Any], scraped
         "max_price": payload["search_criteria"]["max_price"],
         "beds_min": payload["search_criteria"]["beds_min"],
         "property_type": payload["search_criteria"]["property_type"],
-        "search_snapshot": payload["search_criteria"],
+        "search_snapshot": merged_snapshot,
         "last_scraped_at": scraped_at,
         "is_active": True,
     }
@@ -1051,6 +1121,21 @@ def ensure_saved_search(config: SupabaseConfig, payload: dict[str, Any], scraped
     if not isinstance(result, list) or not result:
         raise RuntimeError("Supabase did not return a saved_searches row")
     return result[0]
+
+
+def fetch_existing_saved_search(config: SupabaseConfig, search_key: str) -> dict[str, Any] | None:
+    result = supabase_request(
+        config,
+        "saved_searches",
+        query={
+            "search_key": f"eq.{search_key}",
+            "select": "id,search_snapshot",
+            "limit": 1,
+        },
+    )
+    if isinstance(result, list) and result:
+        return result[0]
+    return None
 
 
 def create_scrape_run(config: SupabaseConfig, saved_search_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1101,6 +1186,28 @@ def get_saved_search_listing_states(config: SupabaseConfig, saved_search_id: int
     return state_by_listing_id
 
 
+def get_active_saved_search_listing_ids(config: SupabaseConfig, saved_search_id: int) -> set[int]:
+    result = supabase_request(
+        config,
+        "saved_search_listings",
+        query={
+            "saved_search_id": f"eq.{saved_search_id}",
+            "is_active": "eq.true",
+            "select": "listing_id",
+        },
+    )
+    if result is None:
+        return set()
+    if not isinstance(result, list):
+        raise RuntimeError("Supabase did not return active saved_search_listings rows")
+    active_ids: set[int] = set()
+    for row in result:
+        listing_id = row.get("listing_id")
+        if isinstance(listing_id, int):
+            active_ids.add(listing_id)
+    return active_ids
+
+
 def fetch_existing_listings(config: SupabaseConfig, listing_keys: list[str]) -> dict[str, dict[str, Any]]:
     unique_keys = sorted({key for key in listing_keys if key})
     if not unique_keys:
@@ -1132,7 +1239,12 @@ def fetch_existing_listings(config: SupabaseConfig, listing_keys: list[str]) -> 
 
 
 def upsert_listings(config: SupabaseConfig, payload: dict[str, Any], scraped_at: str) -> dict[str, int]:
-    rows = [serialize_listing_for_supabase(listing, scraped_at) for listing in payload["listings"]]
+    existing_listing_rows = fetch_existing_listings(config, [listing["url"] for listing in payload["listings"]])
+    rows = []
+    for listing in payload["listings"]:
+        existing = existing_listing_rows.get(listing["url"])
+        merged_listing = build_listing_from_existing(listing, existing) if existing else listing
+        rows.append(serialize_listing_for_supabase(merged_listing, scraped_at))
     if not rows:
         logging.info("No listings to save to Supabase")
         return {}
@@ -1248,13 +1360,14 @@ def save_to_supabase(config: SupabaseConfig, payload: dict[str, Any]) -> int:
     scrape_run = create_scrape_run(config, int(saved_search["id"]), payload)
     listing_id_by_key = upsert_listings(config, payload, scraped_at)
     existing_states = get_saved_search_listing_states(config, int(saved_search["id"]))
+    previously_active_listing_ids = get_active_saved_search_listing_ids(config, int(saved_search["id"]))
     linked_count = save_scrape_run_listings(
         config,
         saved_search_id=int(saved_search["id"]),
         scrape_run_id=int(scrape_run["id"]),
         payload=payload,
         listing_id_by_key=listing_id_by_key,
-        existing_listing_ids=set(existing_states),
+        existing_listing_ids=previously_active_listing_ids,
     )
     active_count = sync_saved_search_listings(
         config,
@@ -1382,16 +1495,35 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
         await detail_page.close()
 
 
-async def collect_listing_summaries_from_current_page(page: Page, limit: int) -> list[dict[str, Any]]:
-    cards = page.locator("div:has(a[href*='/real-estate/']), article:has(a[href*='/real-estate/'])")
+async def collect_listing_summaries_from_current_page(
+    page: Page,
+    limit: int,
+    requested_location: str,
+) -> list[dict[str, Any]]:
+    cards = page.locator(RESULT_CARD_SELECTOR).filter(
+        has=page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']")
+    )
     listings_by_url: dict[str, dict[str, Any]] = {}
     card_count = await cards.count()
     logging.info("Scanning %s visible result cards on current page", card_count)
 
     for idx in range(card_count):
         card = cards.nth(idx)
+        try:
+            if not await card.is_visible():
+                continue
+        except Exception:
+            continue
         listing = await scrape_card(card)
         if not listing:
+            continue
+        if not address_matches_requested_location(listing.get("address"), requested_location):
+            logging.warning(
+                "Discarding listing outside requested location '%s': %s | %s",
+                requested_location,
+                listing.get("address") or "unknown address",
+                listing["url"],
+            )
             continue
         listings_by_url.setdefault(listing["url"], listing)
         if len(listings_by_url) >= limit:
@@ -1401,45 +1533,82 @@ async def collect_listing_summaries_from_current_page(page: Page, limit: int) ->
 
 
 async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
-    next_links = page.locator("a[aria-label='Go to the next page']")
-    link_count = await next_links.count()
-    if link_count == 0:
-        logging.warning("Next-page control was not found")
+    page_indicator = parse_page_indicator(await extract_page_indicator(page))
+    if page_indicator and page_indicator[0] >= page_indicator[1]:
+        logging.info("Already on final results page (%s of %s)", page_indicator[0], page_indicator[1])
         return False
 
-    next_link = None
-    for index in range(link_count):
-        candidate = next_links.nth(index)
-        try:
-            if not await candidate.is_visible():
+    expected_next_page = page_indicator[0] + 1 if page_indicator else None
+    candidates = [
+        ("next-aria", page.locator("a[aria-label='Go to the next page']")),
+        ("next-class", page.locator("a.lnkNextResultsPage, button.lnkNextResultsPage")),
+    ]
+    if expected_next_page is not None:
+        candidates.extend(
+            [
+                (
+                    f"page-number-link-{expected_next_page}",
+                    page.locator(
+                        f"a[aria-label='Go to page {expected_next_page}'], button[aria-label='Go to page {expected_next_page}']"
+                    ),
+                ),
+                (
+                    f"page-number-text-{expected_next_page}",
+                    page.locator(f"a:has-text('{expected_next_page}'), button:has-text('{expected_next_page}')"),
+                ),
+            ]
+        )
+
+    clicked = False
+    for label, locator in candidates:
+        count = await locator.count()
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                if not await candidate.is_visible():
+                    continue
+                current_class = (await candidate.get_attribute("class") or "").lower()
+                disabled_attr = await candidate.get_attribute("disabled")
+                aria_disabled = (await candidate.get_attribute("aria-disabled") or "").lower()
+                if "disabled" in current_class or disabled_attr is not None or aria_disabled == "true":
+                    continue
+                await candidate.scroll_into_view_if_needed()
+                logging.info("Navigating to the next results page using %s", label)
+                try:
+                    await candidate.click(timeout=5000)
+                except Exception:
+                    await candidate.evaluate("(el) => el.click()")
+                clicked = True
+                break
+            except Exception:
                 continue
-            current_class = (await candidate.get_attribute("class") or "").lower()
-            disabled_attr = await candidate.get_attribute("disabled")
-            aria_disabled = (await candidate.get_attribute("aria-disabled") or "").lower()
-            if "disabled" in current_class or disabled_attr is not None or aria_disabled == "true":
-                continue
-            next_link = candidate
+        if clicked:
             break
-        except Exception:
-            continue
 
-    if next_link is None:
-        logging.info("No enabled visible next-page control is available")
+    if not clicked:
+        logging.info(
+            "No enabled visible next-page control is available; page_indicator=%s",
+            await extract_page_indicator(page) or "unknown",
+        )
         return False
 
-    logging.info("Navigating to the next results page")
-    await next_link.click()
     await human_pause(0.3, 0.7)
 
     try:
         await page.wait_for_function(
             """
-            previousUrl => {
+            ({ previousUrl, expectedPage }) => {
+                if (expectedPage) {
+                    const currentUrl = window.location.href;
+                    if (currentUrl.includes(`CurrentPage=${expectedPage}`)) {
+                        return true;
+                    }
+                }
                 const links = Array.from(document.querySelectorAll("a[href*='/real-estate/'], a[href*='/real-estate-properties/']"));
                 return links.some(link => link.getAttribute('href') && !link.getAttribute('href').includes(previousUrl.split('/').pop()));
             }
             """,
-            arg=previous_first_url,
+            arg={"previousUrl": previous_first_url, "expectedPage": expected_next_page},
             timeout=15000,
         )
     except TimeoutError:
@@ -1450,7 +1619,12 @@ async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
     return True
 
 
-async def collect_listing_summaries_across_pages(page: Page, page_limit: int, total_limit: int) -> list[dict[str, Any]]:
+async def collect_listing_summaries_across_pages(
+    page: Page,
+    page_limit: int,
+    total_limit: int,
+    requested_location: str,
+) -> list[dict[str, Any]]:
     logging.info(
         "Collecting up to %s listing(s) across %s results page(s)",
         total_limit,
@@ -1465,7 +1639,11 @@ async def collect_listing_summaries_across_pages(page: Page, page_limit: int, to
             break
 
         await log_results_snapshot(page, f"Before scanning results page {page_index}")
-        page_listings = await collect_listing_summaries_from_current_page(page, remaining)
+        page_listings = await collect_listing_summaries_from_current_page(
+            page,
+            remaining,
+            requested_location,
+        )
         page_listings = [listing for listing in page_listings if listing["url"] not in seen_urls]
 
         if not page_listings:
@@ -1484,6 +1662,10 @@ async def collect_listing_summaries_across_pages(page: Page, page_limit: int, to
         )
 
         if len(collected) >= total_limit or page_index == page_limit:
+            break
+
+        page_indicator = parse_page_indicator(await extract_page_indicator(page))
+        if page_indicator and page_indicator[0] >= page_indicator[1]:
             break
 
         first_url = page_listings[0]["url"]
@@ -1581,11 +1763,12 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
             await human_pause(0.2, 0.45)
 
             await apply_search_criteria(page, criteria)
-            await apply_search_within_boundary_if_present(page)
 
             logging.info("Waiting for listing links to appear")
             await wait_for_listings(page)
-            results_count = await extract_results_count(page)
+            results_count, stabilized_page_indicator = await wait_for_results_stabilization(page)
+            if stabilized_page_indicator:
+                logging.info("Settled page indicator before collection: %s", stabilized_page_indicator)
 
             visible_link_count = await page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").count()
             logging.info("Found %s listing links after applying filters", visible_link_count)
@@ -1594,6 +1777,7 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
                 page,
                 page_limit=limits.max_pages,
                 total_limit=limits.max_listings,
+                requested_location=criteria.location,
             )
 
             if not summaries:

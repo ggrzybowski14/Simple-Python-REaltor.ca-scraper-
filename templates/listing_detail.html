@@ -14,6 +14,7 @@
     <p class="hero-copy">
       Full scraped detail for an active listing within <strong>{{ saved_search.name }}</strong>.
     </p>
+    <p class="hero-meta-line">Last seen in scrape: {{ listing.last_seen_at }}</p>
   </div>
   <div class="hero-metrics">
     <div class="metric-card">
@@ -24,10 +25,25 @@
       <span class="metric-label">Results Page</span>
       <strong>{{ listing.results_page or '?' }}</strong>
     </div>
-    <div class="metric-card">
-      <span class="metric-label">Last Seen</span>
-      <strong>{{ listing.last_seen_at }}</strong>
+    {% if listing_buy_box %}
+    <div class="metric-card metric-card-wide compact-buy-box">
+      <span class="metric-label">Buy Box</span>
+      <div class="metric-title-row">
+        <strong>{{ listing_buy_box.label }}</strong>
+        <div class="metric-meta">
+        <span class="pill {% if listing_buy_box.bucket == 'matched' %}status-succeeded{% elif listing_buy_box.bucket == 'maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}">
+          {{ listing_buy_box.label }}
+        </span>
+        {% if listing_buy_box.ai_verdict %}
+        <span class="pill ai-pill ai-{{ listing_buy_box.ai_verdict }}">{{ listing_buy_box.ai_verdict|title }}</span>
+        {% endif %}
+        </div>
+      </div>
+      {% if listing_buy_box.reasons %}
+      <p class="metric-detail compact-detail">{{ listing_buy_box.reasons|join(' | ') }}</p>
+      {% endif %}
     </div>
+    {% endif %}
   </div>
 </section>
 
@@ -70,6 +86,7 @@
       <div class="fact-row"><span>HOA fees</span><strong>{{ listing.hoa_fees or 'N/A' }}</strong></div>
       <div class="fact-row"><span>Time on Realtor</span><strong>{{ listing.time_on_realtor or 'N/A' }}</strong></div>
       <div class="fact-row"><span>Zoning</span><strong>{{ listing.zoning_type or 'N/A' }}</strong></div>
+      <div class="fact-row"><span>Last seen in scrape</span><strong>{{ listing.last_seen_at }}</strong></div>
       <div class="fact-row"><span>Source key</span><strong>{{ listing.source_listing_key }}</strong></div>
     </div>
   </div>

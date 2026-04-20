@@ -65,6 +65,14 @@ def parse_price_amount(value: str | None) -> int | None:
     return int(digits) if digits else None
 
 
+def normalize_listing_id(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def normalize_keyword_list(value: str | None) -> list[str]:
     if not value:
         return []
@@ -72,16 +80,71 @@ def normalize_keyword_list(value: str | None) -> list[str]:
     return [part for part in raw_parts if part]
 
 
+def get_saved_buy_box_settings(saved_search: dict[str, Any]) -> dict[str, Any]:
+    snapshot = saved_search.get("search_snapshot")
+    if not isinstance(snapshot, dict):
+        return {}
+    saved_buy_box = snapshot.get("buy_box")
+    return saved_buy_box if isinstance(saved_buy_box, dict) else {}
+
+
+def has_saved_buy_box_settings(saved_buy_box: dict[str, Any]) -> bool:
+    if not saved_buy_box:
+        return False
+    return any(
+        [
+            saved_buy_box.get("applied"),
+            saved_buy_box.get("max_price") is not None,
+            saved_buy_box.get("beds_min") is not None,
+            bool((saved_buy_box.get("property_type") or "").strip()),
+            bool((saved_buy_box.get("required_keywords_raw") or "").strip()),
+            bool((saved_buy_box.get("ai_goal_raw") or "").strip()),
+        ]
+    )
+
+
 def build_buy_box_criteria(args, saved_search: dict[str, Any]) -> dict[str, Any]:
+    saved_buy_box = get_saved_buy_box_settings(saved_search)
+    query_applied = bool(args.get("apply_buy_box"))
+    persisted_applied = has_saved_buy_box_settings(saved_buy_box)
+    applied = query_applied or persisted_applied
     return {
-        "max_price": parse_optional_int(args.get("buy_box_max_price")) if args.get("apply_buy_box") else saved_search.get("max_price"),
-        "beds_min": parse_optional_int(args.get("buy_box_beds_min")) if args.get("apply_buy_box") else saved_search.get("beds_min"),
-        "property_type": (args.get("buy_box_property_type") or "").strip().lower() or (saved_search.get("property_type") or ""),
-        "required_keywords_raw": (args.get("buy_box_keywords") or "").strip(),
-        "required_keywords": normalize_keyword_list(args.get("buy_box_keywords") or ""),
-        "ai_goal_raw": (args.get("buy_box_ai_goal") or "").strip(),
-        "ai_enabled": bool((args.get("buy_box_ai_goal") or "").strip()),
-        "applied": bool(args.get("apply_buy_box")),
+        "max_price": (
+            parse_optional_int(args.get("buy_box_max_price"))
+            if query_applied
+            else saved_buy_box.get("max_price", saved_search.get("max_price"))
+        ),
+        "beds_min": (
+            parse_optional_int(args.get("buy_box_beds_min"))
+            if query_applied
+            else saved_buy_box.get("beds_min", saved_search.get("beds_min"))
+        ),
+        "property_type": (
+            (args.get("buy_box_property_type") or "").strip().lower()
+            if query_applied
+            else (saved_buy_box.get("property_type") or saved_search.get("property_type") or "")
+        ),
+        "required_keywords_raw": (
+            (args.get("buy_box_keywords") or "").strip()
+            if query_applied
+            else (saved_buy_box.get("required_keywords_raw") or "")
+        ),
+        "required_keywords": (
+            normalize_keyword_list(args.get("buy_box_keywords") or "")
+            if query_applied
+            else normalize_keyword_list(saved_buy_box.get("required_keywords_raw"))
+        ),
+        "ai_goal_raw": (
+            (args.get("buy_box_ai_goal") or "").strip()
+            if query_applied
+            else (saved_buy_box.get("ai_goal_raw") or "")
+        ),
+        "ai_enabled": bool(
+            (args.get("buy_box_ai_goal") or "").strip()
+            if query_applied
+            else (saved_buy_box.get("ai_goal_raw") or "").strip()
+        ),
+        "applied": applied,
     }
 
 
@@ -115,6 +178,19 @@ def analyze_listing_against_buy_box(listing: dict[str, Any], criteria: dict[str,
             "apartment": ["apartment"],
             "condo": ["condo", "apartment"],
         }
+        if expected_type == "house":
+            building_type = (listing.get("building_type") or "").strip().lower()
+            excluded_house_types = [
+                "duplex",
+                "triplex",
+                "row / townhouse",
+                "row/townhouse",
+                "townhouse",
+                "half duplex",
+                "fourplex",
+            ]
+            if any(label in building_type for label in excluded_house_types):
+                reasons.append(f"Building type is {listing.get('building_type')}")
         aliases = property_type_aliases.get(expected_type, [expected_type])
         if not any(alias in listing_type for alias in aliases):
             reasons.append(f"Type is not {expected_type}")
@@ -329,6 +405,36 @@ def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dic
     }
 
 
+def analyze_listing_for_detail(listing: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any] | None:
+    if not criteria.get("applied"):
+        return None
+    analysis = analyze_active_listings([listing], criteria)
+    for bucket_name in ("matched", "maybe", "unmatched"):
+        bucket = analysis[bucket_name]
+        if bucket:
+            analyzed_listing = bucket[0]
+            return {
+                "bucket": bucket_name,
+                "label": bucket_name.title(),
+                "reasons": analyzed_listing.get("buy_box_reasons", []),
+                "ai_verdict": analyzed_listing.get("ai_buy_box_verdict"),
+                "ai_reason": analyzed_listing.get("ai_buy_box_reason"),
+                "ai_error": analysis.get("ai_error"),
+            }
+    return None
+
+
+def serialize_buy_box_criteria(criteria: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "applied": bool(criteria.get("applied")),
+        "max_price": criteria.get("max_price"),
+        "beds_min": criteria.get("beds_min"),
+        "property_type": criteria.get("property_type") or "",
+        "required_keywords_raw": criteria.get("required_keywords_raw") or "",
+        "ai_goal_raw": criteria.get("ai_goal_raw") or "",
+    }
+
+
 def create_app() -> Flask:
     load_dotenv()
     app = Flask(__name__)
@@ -367,8 +473,14 @@ def create_app() -> Flask:
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
+        if flask_request.args.get("clear_buy_box"):
+            clear_saved_buy_box(config, saved_search)
+            return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
         active_listings = fetch_active_listings(config, saved_search_id)
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
+        if flask_request.args.get("apply_buy_box"):
+            persist_saved_buy_box(config, saved_search, buy_box)
+            return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
         analysis = analyze_active_listings(active_listings, buy_box)
         scrape_runs = fetch_recent_runs(config, saved_search_id=saved_search_id)
         latest_run = scrape_runs[0] if scrape_runs else None
@@ -383,6 +495,8 @@ def create_app() -> Flask:
             buy_box_ai_error=analysis["ai_error"],
             scrape_runs=scrape_runs,
             latest_run=latest_run,
+            new_listing_count=sum(1 for listing in active_listings if listing.get("is_new_in_run")),
+            sparse_listing_count=count_sparse_listings(active_listings),
             property_type_options=PROPERTY_TYPE_OPTIONS,
             current_query=flask_request.query_string.decode("utf-8"),
         )
@@ -396,10 +510,14 @@ def create_app() -> Flask:
         listing = fetch_active_listing_detail(config, saved_search_id, listing_id)
         if listing is None:
             abort(404)
+        buy_box = build_buy_box_criteria(flask_request.args, saved_search)
+        listing_buy_box = analyze_listing_for_detail(listing, buy_box)
         return render_template(
             "listing_detail.html",
             saved_search=saved_search,
             listing=listing,
+            buy_box=buy_box,
+            listing_buy_box=listing_buy_box,
             back_query=flask_request.query_string.decode("utf-8"),
         )
 
@@ -412,6 +530,27 @@ def create_app() -> Flask:
         args = build_scrape_args(flask_request.form)
         job = start_scrape_job(args)
         return redirect(url_for("dashboard", started=job["id"]))
+
+    @app.route("/saved-searches/<int:saved_search_id>/scrapes", methods=["POST"])
+    def update_saved_search(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+
+        args = build_scrape_args_from_saved_search(saved_search)
+        job = start_scrape_job(args)
+        return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id, started=job["id"]))
+
+    @app.route("/saved-searches/<int:saved_search_id>/retry-sparse-details", methods=["POST"])
+    def retry_sparse_details(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        args = build_retry_sparse_args(saved_search_id)
+        job = start_scrape_job(args)
+        return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id, started=job["id"]))
 
     @app.route("/jobs/<job_id>")
     def job_detail(job_id: str) -> str:
@@ -455,6 +594,40 @@ def supabase_get(config: SupabaseReadConfig, path: str, *, query: dict[str, Any]
         raise RuntimeError(f"Supabase read failed: {exc.reason}") from exc
 
 
+def supabase_patch(
+    config: SupabaseReadConfig,
+    path: str,
+    *,
+    query: dict[str, Any] | None = None,
+    payload: dict[str, Any],
+) -> Any:
+    endpoint = f"{config.url}/rest/v1/{path}"
+    if query:
+        endpoint = f"{endpoint}?{parse.urlencode(query, doseq=True)}"
+
+    req = request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        method="PATCH",
+        headers={
+            "apikey": config.key,
+            "Authorization": f"Bearer {config.key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else None
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Supabase write failed with status {exc.code}: {details}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Supabase write failed: {exc.reason}") from exc
+
+
 def fetch_saved_searches(config: SupabaseReadConfig) -> list[dict[str, Any]]:
     result = supabase_get(
         config,
@@ -480,7 +653,7 @@ def fetch_saved_search(config: SupabaseReadConfig, saved_search_id: int) -> dict
         "saved_searches",
         query={
             "id": f"eq.{saved_search_id}",
-            "select": "id,search_key,name,location,min_price,max_price,beds_min,property_type,last_scraped_at",
+            "select": "id,search_key,name,location,min_price,max_price,beds_min,property_type,last_scraped_at,search_snapshot",
             "limit": 1,
         },
     )
@@ -521,6 +694,51 @@ def fetch_active_listings(config: SupabaseReadConfig, saved_search_id: int) -> l
     return listings
 
 
+def count_sparse_listings(listings: list[dict[str, Any]]) -> int:
+    required_fields = [
+        "listing_description",
+        "property_type",
+        "building_type",
+        "square_feet",
+        "built_in",
+    ]
+    sparse_count = 0
+    for listing in listings:
+        if any(not listing.get(field) for field in required_fields):
+            sparse_count += 1
+    return sparse_count
+
+
+def persist_saved_buy_box(
+    config: SupabaseReadConfig,
+    saved_search: dict[str, Any],
+    criteria: dict[str, Any],
+) -> None:
+    snapshot = saved_search.get("search_snapshot")
+    normalized_snapshot = dict(snapshot) if isinstance(snapshot, dict) else {}
+    normalized_snapshot["buy_box"] = serialize_buy_box_criteria(criteria)
+    supabase_patch(
+        config,
+        "saved_searches",
+        query={"id": f"eq.{saved_search['id']}"},
+        payload={"search_snapshot": normalized_snapshot},
+    )
+    saved_search["search_snapshot"] = normalized_snapshot
+
+
+def clear_saved_buy_box(config: SupabaseReadConfig, saved_search: dict[str, Any]) -> None:
+    snapshot = saved_search.get("search_snapshot")
+    normalized_snapshot = dict(snapshot) if isinstance(snapshot, dict) else {}
+    normalized_snapshot.pop("buy_box", None)
+    supabase_patch(
+        config,
+        "saved_searches",
+        query={"id": f"eq.{saved_search['id']}"},
+        payload={"search_snapshot": normalized_snapshot},
+    )
+    saved_search["search_snapshot"] = normalized_snapshot
+
+
 def fetch_active_listing_detail(
     config: SupabaseReadConfig,
     saved_search_id: int,
@@ -557,7 +775,7 @@ def fetch_listing_media(config: SupabaseReadConfig, listing_ids: list[int]) -> d
         "listings",
         query={
             "id": f"in.({','.join(str(listing_id) for listing_id in unique_ids)})",
-            "select": "id,raw_listing",
+            "select": "id,property_type,building_type,raw_listing",
         },
     )
     rows = result if isinstance(result, list) else []
@@ -571,9 +789,24 @@ def fetch_listing_media(config: SupabaseReadConfig, listing_ids: list[int]) -> d
         primary_photo_url = raw_listing.get("primary_photo_url") if isinstance(raw_listing, dict) else None
         if not primary_photo_url and cleaned_urls:
             primary_photo_url = cleaned_urls[0]
+        property_type = row.get("property_type") if isinstance(row, dict) else None
+        building_type = row.get("building_type") if isinstance(row, dict) else None
+        if isinstance(raw_listing, dict):
+            property_type = property_type or raw_listing.get("property_type")
+            building_type = building_type or raw_listing.get("building_type")
         media_by_id[row["id"]] = {
             "photo_urls": cleaned_urls[:6],
             "primary_photo_url": primary_photo_url,
+            "property_type": property_type,
+            "building_type": building_type,
+            "listing_description": raw_listing.get("listing_description") if isinstance(raw_listing, dict) else None,
+            "square_feet": raw_listing.get("square_feet") if isinstance(raw_listing, dict) else None,
+            "land_size": raw_listing.get("land_size") if isinstance(raw_listing, dict) else None,
+            "built_in": raw_listing.get("built_in") if isinstance(raw_listing, dict) else None,
+            "annual_taxes": raw_listing.get("annual_taxes") if isinstance(raw_listing, dict) else None,
+            "hoa_fees": raw_listing.get("hoa_fees") if isinstance(raw_listing, dict) else None,
+            "time_on_realtor": raw_listing.get("time_on_realtor") if isinstance(raw_listing, dict) else None,
+            "zoning_type": raw_listing.get("zoning_type") if isinstance(raw_listing, dict) else None,
         }
     return media_by_id
 
@@ -581,12 +814,26 @@ def fetch_listing_media(config: SupabaseReadConfig, listing_ids: list[int]) -> d
 def merge_listing_media(config: SupabaseReadConfig, listings: list[dict[str, Any]]) -> None:
     media_by_id = fetch_listing_media(
         config,
-        [listing.get("listing_id") for listing in listings if isinstance(listing, dict)],
+        [
+            normalize_listing_id(listing.get("listing_id"))
+            for listing in listings
+            if isinstance(listing, dict)
+        ],
     )
     for listing in listings:
-        media = media_by_id.get(listing.get("listing_id"), {})
+        media = media_by_id.get(normalize_listing_id(listing.get("listing_id")), {})
         listing["photo_urls"] = media.get("photo_urls", [])
         listing["primary_photo_url"] = media.get("primary_photo_url")
+        listing["property_type"] = listing.get("property_type") or media.get("property_type")
+        listing["building_type"] = listing.get("building_type") or media.get("building_type")
+        listing["listing_description"] = listing.get("listing_description") or media.get("listing_description")
+        listing["square_feet"] = listing.get("square_feet") or media.get("square_feet")
+        listing["land_size"] = listing.get("land_size") or media.get("land_size")
+        listing["built_in"] = listing.get("built_in") or media.get("built_in")
+        listing["annual_taxes"] = listing.get("annual_taxes") or media.get("annual_taxes")
+        listing["hoa_fees"] = listing.get("hoa_fees") or media.get("hoa_fees")
+        listing["time_on_realtor"] = listing.get("time_on_realtor") or media.get("time_on_realtor")
+        listing["zoning_type"] = listing.get("zoning_type") or media.get("zoning_type")
 
 
 def build_scrape_args(form_data) -> list[str]:
@@ -609,6 +856,41 @@ def build_scrape_args(form_data) -> list[str]:
     append_value("--detail-limit", form_data.get("detail_limit") or str(DEFAULT_DETAIL_LIMIT))
     append_value("--detail-concurrency", form_data.get("detail_concurrency") or str(DEFAULT_DETAIL_CONCURRENCY))
     return args
+
+
+def build_scrape_args_from_saved_search(saved_search: dict[str, Any]) -> list[str]:
+    args = [str(resolve_scraper_python()), "scraper.py"]
+
+    def append_value(flag: str, value: Any) -> None:
+        if value is None:
+            return
+        cleaned = str(value).strip()
+        if cleaned:
+            args.extend([flag, cleaned])
+
+    append_value("--location", saved_search.get("location"))
+    append_value("--beds-min", saved_search.get("beds_min"))
+    append_value("--property-type", saved_search.get("property_type"))
+    append_value("--min-price", saved_search.get("min_price"))
+    append_value("--max-price", saved_search.get("max_price"))
+    append_value("--max-pages", DEFAULT_MAX_PAGES)
+    append_value("--max-listings", DEFAULT_MAX_LISTINGS)
+    append_value("--detail-limit", DEFAULT_DETAIL_LIMIT)
+    append_value("--detail-concurrency", DEFAULT_DETAIL_CONCURRENCY)
+    return args
+
+
+def build_retry_sparse_args(saved_search_id: int) -> list[str]:
+    return [
+        str(resolve_scraper_python()),
+        "scripts/retry_sparse_listing_details.py",
+        "--saved-search-id",
+        str(saved_search_id),
+        "--limit",
+        "10",
+        "--concurrency",
+        str(DEFAULT_DETAIL_CONCURRENCY),
+    ]
 
 
 def resolve_scraper_python() -> Path:
