@@ -27,6 +27,8 @@ The codebase now also has the first real underwriting layer:
 - persisted underwriting defaults at the saved-search level
 - listing-level rent overrides
 - CMHC-backed market reference data for rent and vacancy baselines
+- BC-wide rule-based utilities and insurance defaults
+- listing-level smart maintenance and CapEx override support
 
 This is still an early application, not a polished product, but it is already beyond pure scraping validation.
 
@@ -74,6 +76,8 @@ The local website currently provides:
 - targeted retry of sparse listing details
 - investment analyzer route for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
+- source-mode controls for rent, vacancy, utilities, and insurance
+- smart per-listing maintenance and CapEx estimate actions
 
 ### Buy Box
 
@@ -159,10 +163,14 @@ What is already implemented:
 - listing-level rent overrides
 - listing-detail underwriting section
 - source-aware market rent and vacancy controls
+- source-aware utilities and insurance controls
+- BC-wide rule-based utilities and insurance heuristics
+- listing-level smart maintenance and CapEx heuristic overrides
 - CMHC market-reference import and match scaffolding
 - AI rent preview inside the `Market Rent Monthly` card
 - `Use AI` flow that applies listing-level AI rent suggestions across the underwriting table
 - listing-detail panel showing accepted AI rent reasoning
+- local automated tests for underwriting math, market matching, helper logic, and key routes
 
 ### Strategy Scope For V1
 
@@ -302,14 +310,14 @@ This gives the project:
 
 ## Immediate Next Step
 
-The next session should focus on AI source integration rather than more underwriting formulas.
+The next session should focus on underwriting UX clarity rather than more formulas.
 
 Concrete next step:
 
-- mirror the same source-mode pattern for `Vacancy %`
-- decide whether vacancy AI should write one saved-search-level value or a reviewed suggestion before acceptance
-- tighten the current AI rent preview layout so the expanded card feels cleaner and less disruptive
-- optionally surface a lighter AI reasoning hint in the underwriting table, while keeping the full explanation on listing detail
+- tighten the current assumption-card UI so active source modes and smart listing-level overrides are obvious at a glance
+- decide whether `Vacancy %` really needs an AI path or should stay `manual` plus `CMHC`
+- improve how the underwriting table surfaces that a row is using smart maintenance or smart CapEx
+- keep full reasoning and detailed override context on listing detail rather than bloating the analyzer table
 
 Important product rule:
 
@@ -507,7 +515,7 @@ Next expansion area:
 
 ### Phase 4: Investment Analyzer V1
 
-Status: planned next
+Status: active
 
 Scope:
 
@@ -516,6 +524,21 @@ Scope:
 - core buy-and-hold metrics
 - green / yellow / red rule indicators
 - base / conservative / stress scenarios
+
+Completed or in progress within this phase:
+
+- saved-search underwriting defaults
+- listing-level rent overrides
+- CMHC-backed vacancy and rent defaults
+- AI-assisted listing-level rent application
+- BC-wide rule-based utilities and insurance defaults
+- listing-level smart maintenance and CapEx heuristics
+
+Still missing in this phase:
+
+- cleaner visual explanation of which rows are using shared defaults versus listing-level smart overrides
+- scenario views beyond the current base case
+- stronger rule-indicator UX
 
 ### Phase 5: Smarter Assumptions And Market Defaults
 
@@ -564,27 +587,26 @@ Likely scope:
 
 The highest-value build order from here is:
 
-1. improve scrape result stability and first-page logging
-2. harden pagination until `results_count` and collected summaries align more reliably
-3. add listing workflow states such as shortlist / ignore / notes if needed for review
-4. design and implement an `investment_assumptions` model
-5. add a dedicated underwriting module for buy-and-hold calculations
-6. add an `Investment Analysis` section to listing detail pages
-7. add rule indicators and base / conservative / stress scenarios
-8. add smarter market-derived defaults and later AI-assisted estimates
+1. tighten the investment-analyzer UI so source modes and smart per-listing overrides are easy to understand
+2. decide whether vacancy should remain `manual` plus `CMHC` or later add AI-assisted estimation
+3. improve scrape result stability and first-page logging
+4. harden pagination until `results_count` and collected summaries align more reliably
+5. add listing workflow states such as shortlist / ignore / notes if needed for review
+6. add rule indicators and base / conservative / stress scenarios
+7. keep refining smarter defaults only where the source quality is defensible
 
 ## Immediate Next Goal
 
 The next concrete goal for the project is:
 
-- stabilize listing ingestion enough that underwriting can trust the active result set
-- then implement buy-and-hold investment analysis on listing detail pages
+- make the underwriting UX clearer now that multiple assumption source modes and listing-level overrides exist
+- keep stabilizing listing ingestion enough that underwriting can trust the active result set
 
 The next coding session should therefore start by answering:
 
-1. do we need one more scraper reliability pass before investment analysis work starts
-2. what schema additions are needed for listing-level investment assumptions
-3. what calculation outputs should the first `Investment Analysis` UI render
+1. how should the analyzer page communicate smart listing overrides without forcing constant navigation into listing detail
+2. should vacancy stay as `manual` plus `CMHC` or gain a later AI-assisted mode
+3. do we need one more scraper reliability pass before relying more heavily on the active set
 
 ## Current Risks And Constraints
 
@@ -593,5 +615,7 @@ The next coding session should therefore start by answering:
 - Realtor.ca can still show transient or stale result counts before the page fully settles
 - pagination controls on Realtor.ca are inconsistent enough that continued defensive handling is warranted
 - market data for smaller Canadian regions may be sparse, which is why phase-2 AI-assisted estimation is part of the roadmap
+- BC-wide utilities and insurance rule-based defaults are intentionally coarse and are not market-specific
+- smart maintenance and CapEx heuristics are useful triage aids, but they are not substitutes for a real condition review or reserve study
 
 These are known issues, but the project is already usable enough to keep building on.

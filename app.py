@@ -19,6 +19,9 @@ from ai_underwriting import build_rent_ai_payload, build_rent_ai_prompt_text, ca
 from investment import (
     build_defaults_snapshot_from_form,
     calculate_underwriting,
+    estimate_rule_based_insurance_monthly,
+    estimate_rule_based_utilities_monthly,
+    estimate_smart_reserve_percentages,
     format_currency,
     format_percent,
     merge_investment_defaults,
@@ -625,6 +628,14 @@ def create_app() -> Flask:
         )
         buy_box = build_buy_box_criteria({}, saved_search)
         buy_box_results_by_listing_id = build_buy_box_result_lookup(active_listings, buy_box)
+        smart_maintenance_active = any(
+            isinstance(snapshot, dict) and snapshot.get("maintenance_percent_source") == "smart_listing_estimate"
+            for snapshot in overrides_by_listing_id.values()
+        )
+        smart_capex_active = any(
+            isinstance(snapshot, dict) and snapshot.get("capex_percent_source") == "smart_listing_estimate"
+            for snapshot in overrides_by_listing_id.values()
+        )
         underwriting_rows = build_underwriting_rows(
             active_listings,
             defaults_snapshot,
@@ -641,6 +652,8 @@ def create_app() -> Flask:
             market_match=market_match,
             default_rent_ai_prompt=build_rent_ai_prompt_text(),
             ai_rent_preview=AI_RENT_PREVIEWS.get(saved_search_id),
+            smart_maintenance_active=smart_maintenance_active,
+            smart_capex_active=smart_capex_active,
             ai_preview_listing_lookup={
                 normalize_listing_id(listing.get("listing_id")): listing
                 for listing in active_listings
@@ -724,6 +737,172 @@ def create_app() -> Flask:
         updated_defaults["vacancy_percent"]["help_url"] = reference.get("source_url")
         persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_vacancy_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-manual-utilities", methods=["POST"])
+    def use_manual_utilities_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        manual_utilities = parse_optional_int(flask_request.form.get("utilities_monthly"))
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["utilities_monthly"]["value"] = float(manual_utilities) if manual_utilities is not None else None
+        updated_defaults["utilities_monthly"]["source"] = "manual"
+        updated_defaults["utilities_monthly"]["confidence"] = "medium"
+        updated_defaults["utilities_monthly"]["help_text"] = "Manual landlord-paid utilities estimate."
+        updated_defaults["utilities_monthly"]["help_url"] = None
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, manual_utilities_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-off-utilities", methods=["POST"])
+    def use_off_utilities_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["utilities_monthly"]["value"] = 0.0
+        updated_defaults["utilities_monthly"]["source"] = "off"
+        updated_defaults["utilities_monthly"]["confidence"] = "high"
+        updated_defaults["utilities_monthly"]["help_text"] = "Landlord-paid utilities assumed to be zero for this underwriting view."
+        updated_defaults["utilities_monthly"]["help_url"] = None
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, utilities_off=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-rule-based-utilities", methods=["POST"])
+    def use_rule_based_utilities_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        estimate = estimate_rule_based_utilities_monthly(saved_search)
+        updated_defaults["utilities_monthly"].update(estimate)
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, utilities_rule_based=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-manual-insurance", methods=["POST"])
+    def use_manual_insurance_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        manual_insurance = parse_optional_int(flask_request.form.get("insurance_monthly"))
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["insurance_monthly"]["value"] = float(manual_insurance) if manual_insurance is not None else None
+        updated_defaults["insurance_monthly"]["source"] = "manual"
+        updated_defaults["insurance_monthly"]["confidence"] = "medium"
+        updated_defaults["insurance_monthly"]["help_text"] = "Manual insurance estimate."
+        updated_defaults["insurance_monthly"]["help_url"] = None
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, manual_insurance_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-rule-based-insurance", methods=["POST"])
+    def use_rule_based_insurance_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        estimate = estimate_rule_based_insurance_monthly(saved_search)
+        updated_defaults["insurance_monthly"].update(estimate)
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, insurance_rule_based=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/apply-smart-maintenance", methods=["POST"])
+    def apply_smart_maintenance_estimates(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        applied_count = 0
+        for listing in active_listings:
+            listing_id = normalize_listing_id(listing.get("listing_id"))
+            if listing_id is None:
+                continue
+            estimate = estimate_smart_reserve_percentages(listing)
+            persist_listing_investment_override(
+                config,
+                saved_search_id,
+                listing_id,
+                {
+                    "maintenance_percent_of_rent": estimate["maintenance_percent_of_rent"]["value"],
+                    "maintenance_percent_source": estimate["maintenance_percent_of_rent"]["source"],
+                    "maintenance_percent_confidence": estimate["maintenance_percent_of_rent"]["confidence"],
+                    "maintenance_percent_help_text": estimate["maintenance_percent_of_rent"]["help_text"],
+                },
+            )
+            applied_count += 1
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, smart_maintenance_applied=applied_count))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/apply-smart-capex", methods=["POST"])
+    def apply_smart_capex_estimates(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        applied_count = 0
+        for listing in active_listings:
+            listing_id = normalize_listing_id(listing.get("listing_id"))
+            if listing_id is None:
+                continue
+            estimate = estimate_smart_reserve_percentages(listing)
+            persist_listing_investment_override(
+                config,
+                saved_search_id,
+                listing_id,
+                {
+                    "capex_percent_of_rent": estimate["capex_percent_of_rent"]["value"],
+                    "capex_percent_source": estimate["capex_percent_of_rent"]["source"],
+                    "capex_percent_confidence": estimate["capex_percent_of_rent"]["confidence"],
+                    "capex_percent_help_text": estimate["capex_percent_of_rent"]["help_text"],
+                },
+            )
+            applied_count += 1
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, smart_capex_applied=applied_count))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-shared-maintenance", methods=["POST"])
+    def use_shared_maintenance_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        clear_listing_override_keys_for_saved_search(
+            config,
+            saved_search_id,
+            [
+                "maintenance_percent_of_rent",
+                "maintenance_percent_source",
+                "maintenance_percent_confidence",
+                "maintenance_percent_help_text",
+            ],
+        )
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, shared_maintenance_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-shared-capex", methods=["POST"])
+    def use_shared_capex_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        clear_listing_override_keys_for_saved_search(
+            config,
+            saved_search_id,
+            [
+                "capex_percent_of_rent",
+                "capex_percent_source",
+                "capex_percent_confidence",
+                "capex_percent_help_text",
+            ],
+        )
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, shared_capex_used=1))
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/ai-rent-preview", methods=["POST"])
     def preview_ai_rent_suggestions(saved_search_id: int) -> Any:
@@ -1275,6 +1454,41 @@ def clear_listing_rent_overrides_for_saved_search(
         updated_snapshot = dict(snapshot)
         updated_snapshot.pop("market_rent_monthly", None)
         updated_snapshot.pop("market_rent_source", None)
+        supabase_patch(
+            config,
+            "listing_investment_overrides",
+            query={"saved_search_id": f"eq.{saved_search_id}", "listing_id": f"eq.{listing_id}"},
+            payload={"overrides_snapshot": updated_snapshot},
+        )
+
+
+def clear_listing_override_keys_for_saved_search(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+    keys: list[str],
+) -> None:
+    try:
+        result = supabase_get(
+            config,
+            "listing_investment_overrides",
+            query={
+                "saved_search_id": f"eq.{saved_search_id}",
+                "select": "listing_id,overrides_snapshot",
+            },
+        )
+    except RuntimeError:
+        return
+    rows = result if isinstance(result, list) else []
+    for row in rows:
+        listing_id = row.get("listing_id")
+        snapshot = row.get("overrides_snapshot")
+        if not isinstance(listing_id, int) or not isinstance(snapshot, dict):
+            continue
+        if not any(key in snapshot for key in keys):
+            continue
+        updated_snapshot = dict(snapshot)
+        for key in keys:
+            updated_snapshot.pop(key, None)
         supabase_patch(
             config,
             "listing_investment_overrides",

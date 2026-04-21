@@ -24,10 +24,13 @@ Current state:
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
+- Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
+- Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
+- Automated tests working: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
-- Next active step: build the vacancy-side AI flow and tighten the rent-preview UI layout
+- Next active step: tighten the underwriting UI so source modes and per-listing smart overrides are easier to read, then decide whether vacancy needs an AI mode at all
 
 ## What It Does Today
 
@@ -55,6 +58,9 @@ Current state:
 - Supports a dedicated saved-search underwriting page with grouped listing comparison and computed investment metrics
 - Supports listing-specific rent overrides that feed the underwriting table and listing-detail page
 - Supports CMHC market-reference matching for market rent and vacancy baselines
+- Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
+- Supports separate smart maintenance and smart CapEx per-listing override passes for active listings
+- Includes a local pytest suite for the deterministic underwriting and app logic
 
 ## What It Is Not Yet
 
@@ -76,6 +82,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 python scraper.py
+
+# run the automated tests
+.venv/bin/python -m pytest -q
 
 # or pass filters directly
 python scraper.py --location Victoria --beds-min 2 --property-type house --max-price 1000000
@@ -222,8 +231,10 @@ Current website scope:
   - grouping into `likely`, `maybe`, and `unlikely`
   - sorting within each bucket by strongest monthly cash flow first
   - saved-search underwriting defaults
-  - local source controls for market rent and vacancy
+  - local source controls for market rent, vacancy, utilities, and insurance
   - AI rent preview and `Use AI` flow inside the `Market Rent Monthly` card
+  - BC-wide rule-based utilities and insurance defaults
+  - separate `Apply smart maintenance` and `Apply smart CapEx` actions that write listing-level reserve overrides
   - listing-level rent overrides
 - listing-detail underwriting section with:
   - monthly cash flow
@@ -232,6 +243,7 @@ Current website scope:
   - rent-to-price ratio
   - assumptions and source summary
   - accepted AI rent reasoning when present
+  - visibility into smart listing-level reserve overrides through `Assumptions Used`
 
 Current website limitations:
 
@@ -243,8 +255,10 @@ Current website limitations:
 - no explicit “why this listing was reused vs re-scraped” UI yet
 - site result counts can still fluctuate while Realtor.ca settles
 - vacancy-side AI flow is not built yet
-- rent-side AI preview works but still needs a more polished layout treatment
+- underwriting source-mode UI still needs another polish pass so smart overrides and active modes are more obvious
 - CMHC rent data is currently apartment-oriented, so house searches can still require manual or AI adjustment
+- utilities and insurance rule-based estimates are BC-wide heuristics, not market-specific estimates
+- smart maintenance and smart CapEx are heuristic listing-level overrides, not full asset-condition models
 
 ## Product Direction
 
@@ -320,10 +334,10 @@ See [PRODUCT_INSPIRATION.md](/Users/georgia/Projects/simple realtor.ca scraper p
 
 Highest-value next work from the current state:
 
-1. make settled site counts more reliable by improving post-filter stabilization and logging first-page URLs more clearly
-2. keep hardening pagination so `results_count` and `summary_count` stay aligned across repeated runs
-3. decide the schema for listing-level investment assumptions
-4. build the first buy-and-hold underwriting module and listing-detail investment UI
+1. tighten the investment-analyzer UI so active source modes and listing-level smart overrides are obvious without opening every listing
+2. decide whether `vacancy %` truly needs an AI mode or should remain `manual` plus `CMHC` only
+3. make settled site counts more reliable by improving post-filter stabilization and logging first-page URLs more clearly
+4. keep hardening pagination so `results_count` and `summary_count` stay aligned across repeated runs
 5. add workflow states such as shortlist / ignore / notes for reviewed listings
 6. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
 
@@ -344,7 +358,8 @@ Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
 - keep improving scrape stability until the active listing set is dependable enough for underwriting
-- add listing-level investment assumptions and a first `Investment Analysis` section
+- polish the underwriting assumption UX, especially the visibility of per-listing smart overrides versus shared defaults
+- decide whether to keep vacancy source modes to `manual` plus `CMHC` or add a later AI-assisted path
 - add simple listing workflow actions such as shortlist / ignore / notes
 
 Planned direction after that:

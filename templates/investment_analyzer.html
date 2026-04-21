@@ -48,8 +48,8 @@
     <h2>Saved-search defaults</h2>
   </div>
   <form method="post" action="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}" class="assumptions-grid">
-    {% for key, field in investment_defaults.items() %}
-    <label class="assumption-field{% if key == 'market_rent_monthly' and ai_rent_preview %} assumption-field-wide{% endif %}">
+    {% for key, field in investment_defaults.items() if key != 'market_rent_monthly' %}
+    <label class="assumption-field">
       <span class="assumption-label-row">
         <span>{{ field.label }}</span>
         <span class="info-chip" title="{{ field.help_text }}">i</span>
@@ -92,112 +92,164 @@
         </div>
       </details>
       {% endif %}
-      {% if key == 'market_rent_monthly' %}
-      <div class="local-action-group">
+      {% if key == 'utilities_monthly' %}
+      <div class="source-mode-stack">
+        <div class="source-mode-inline">
+          <input
+            class="source-mode-input"
+            type="number"
+            name="{{ key }}"
+            step="{{ field.input_step or '0.1' }}"
+            value="{{ '' if field.value is none else field.value }}"
+          >
+          <button
+            type="submit"
+            formaction="{{ url_for('use_manual_utilities_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
+          >
+            Apply manual
+          </button>
+        </div>
+        <div class="toggle-row">
+          <button
+            type="submit"
+            formaction="{{ url_for('use_off_utilities_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'off' %}toggle-active{% endif %}"
+          >
+            Landlord pays none
+          </button>
+          <button
+            type="submit"
+            formaction="{{ url_for('use_rule_based_utilities_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'rule_based_bc' %}toggle-active{% endif %}"
+          >
+            Use BC rule-based
+          </button>
+        </div>
+      </div>
+      {% elif key == 'insurance_monthly' %}
+      <div class="source-mode-stack">
+        <div class="source-mode-inline">
+          <input
+            class="source-mode-input"
+            type="number"
+            name="{{ key }}"
+            step="{{ field.input_step or '0.1' }}"
+            value="{{ '' if field.value is none else field.value }}"
+          >
+          <button
+            type="submit"
+            formaction="{{ url_for('use_manual_insurance_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
+          >
+            Apply manual
+          </button>
+        </div>
+        <div class="toggle-row">
+          <button
+            type="submit"
+            formaction="{{ url_for('use_rule_based_insurance_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'rule_based_bc' %}toggle-active{% endif %}"
+          >
+            Use BC rule-based
+          </button>
+        </div>
+      </div>
+      {% elif key == 'maintenance_percent_of_rent' %}
+      <div class="source-mode-stack">
+        {% if smart_maintenance_active %}
+        <input type="text" value="See listing detail" disabled>
+        {% else %}
         <input
           type="number"
           name="{{ key }}"
           step="{{ field.input_step or '0.1' }}"
           value="{{ '' if field.value is none else field.value }}"
         >
-        <div class="toggle-row">
+        {% endif %}
+        <div class="source-mode-inline">
+          {% if smart_maintenance_active %}
           <button
             type="submit"
-            formaction="{{ url_for('use_manual_rent_default', saved_search_id=saved_search.id) }}"
-            class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
+            formaction="{{ url_for('use_shared_maintenance_default', saved_search_id=saved_search.id) }}"
+            class="mini-button toggle-active"
           >
-            Apply manual
+            Use shared value
           </button>
+          {% else %}
           <button
             type="submit"
-            formaction="{{ url_for('use_cmhc_rent_default', saved_search_id=saved_search.id) }}"
-            class="mini-button {% if 'cmhc' in field.source %}toggle-active{% endif %}"
-          >
-            Use CMHC
-          </button>
-        </div>
-        <details class="market-inline-panel compact-market-panel ai-inline-panel" {% if ai_rent_preview %}open{% endif %}>
-          <summary class="market-inline-header">
-            <span class="metric-label">AI rent suggestions</span>
-            <strong>{% if 'ai' in field.source %}AI active{% else %}Preview and apply{% endif %}</strong>
-          </summary>
-          <div class="market-inline-copy">
-            <p class="meta-line">Run AI against the current listings, review the prompt and response, then apply the suggestions across the underwriting table.</p>
-          </div>
-          <label class="ai-inline-form">
-            <span class="metric-label">Editable prompt</span>
-            <textarea name="prompt_text" rows="8">{{ ai_rent_preview.prompt_text if ai_rent_preview else default_rent_ai_prompt }}</textarea>
-          </label>
-          <button
-            type="submit"
-            formaction="{{ url_for('preview_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
+            formaction="{{ url_for('apply_smart_maintenance_estimates', saved_search_id=saved_search.id) }}"
             class="mini-button"
           >
-            Run AI preview
+            Apply smart maintenance
           </button>
-          {% if ai_rent_preview %}
-          <div class="ai-preview-block inline-ai-preview">
-            {% if ai_rent_preview.error %}
-            <p class="ai-error">{{ ai_rent_preview.error }}</p>
-            {% else %}
-            <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
-            <div class="toggle-row">
-              <button
-                type="submit"
-                formaction="{{ url_for('accept_all_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
-                class="mini-button toggle-active"
-              >
-                Use AI
-              </button>
-            </div>
-            <details class="advanced-box">
-              <summary>Prompt payload preview</summary>
-              <pre class="log-block">{{ ai_rent_preview.payload|tojson(indent=2) }}</pre>
-            </details>
-            <details class="advanced-box">
-              <summary>Raw AI response</summary>
-              <pre class="log-block">{{ ai_rent_preview.raw_response_text }}</pre>
-            </details>
-            {% if ai_rent_preview.parsed_response.suggestions %}
-            <div class="table-wrap lower-grid">
-              <table class="data-table compact-ai-table">
-                <thead>
-                  <tr>
-                    <th>Listing</th>
-                    <th>Suggested Rent</th>
-                    <th>Confidence</th>
-                    <th>Direction</th>
-                    <th>Reasoning</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for suggestion in ai_rent_preview.parsed_response.suggestions %}
-                  <tr>
-                    {% set preview_listing = ai_preview_listing_lookup.get(suggestion.listing_id) %}
-                    <td>
-                      {% if preview_listing %}
-                      {{ preview_listing.address }}
-                      <div class="table-subline">
-                        {{ preview_listing.bedrooms or 'N/A' }} bd | {{ preview_listing.bathrooms or 'N/A' }} ba
-                      </div>
-                      {% else %}
-                      #{{ suggestion.listing_id }}
-                      {% endif %}
-                    </td>
-                    <td>{{ suggestion.suggested_rent_monthly|currency }}</td>
-                    <td>{{ suggestion.confidence|title }}</td>
-                    <td>{{ suggestion.adjustment_direction|replace('_', ' ')|title }}</td>
-                    <td>{{ suggestion.reasoning }}</td>
-                  </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-            {% endif %}
-            {% endif %}
-          </div>
           {% endif %}
-        </details>
+          <span
+            class="info-chip"
+            title="Uses listing-level heuristics from built year, renovation/update signals in the description, condition-risk phrases, and condo-vs-house cues to set a maintenance reserve percent."
+          >
+            i
+          </span>
+        </div>
+        {% if request.args.get('smart_maintenance_applied') %}
+        <p class="meta-line">
+          Smart maintenance is active for {{ request.args.get('smart_maintenance_applied') }} listing{{ '' if request.args.get('smart_maintenance_applied') == '1' else 's' }}.
+          Shared 8% is no longer being used for those rows.
+        </p>
+        {% elif smart_maintenance_active %}
+        <p class="meta-line">
+          Listing-level smart maintenance overrides are active. Open a listing detail page to review the exact value used there.
+        </p>
+        {% endif %}
+      </div>
+      {% elif key == 'capex_percent_of_rent' %}
+      <div class="source-mode-stack">
+        {% if smart_capex_active %}
+        <input type="text" value="See listing detail" disabled>
+        {% else %}
+        <input
+          type="number"
+          name="{{ key }}"
+          step="{{ field.input_step or '0.1' }}"
+          value="{{ '' if field.value is none else field.value }}"
+        >
+        {% endif %}
+        <div class="source-mode-inline">
+          {% if smart_capex_active %}
+          <button
+            type="submit"
+            formaction="{{ url_for('use_shared_capex_default', saved_search_id=saved_search.id) }}"
+            class="mini-button toggle-active"
+          >
+            Use shared value
+          </button>
+          {% else %}
+          <button
+            type="submit"
+            formaction="{{ url_for('apply_smart_capex_estimates', saved_search_id=saved_search.id) }}"
+            class="mini-button"
+          >
+            Apply smart CapEx
+          </button>
+          {% endif %}
+          <span
+            class="info-chip"
+            title="Uses listing-level heuristics from built year, renovation/update signals in the description, condition-risk phrases, and condo/strata vs single-family ownership cues to set a CapEx reserve percent."
+          >
+            i
+          </span>
+        </div>
+        {% if request.args.get('smart_capex_applied') %}
+        <p class="meta-line">
+          Smart CapEx is active for {{ request.args.get('smart_capex_applied') }} listing{{ '' if request.args.get('smart_capex_applied') == '1' else 's' }}.
+          Shared 5% is no longer being used for those rows.
+        </p>
+        {% elif smart_capex_active %}
+        <p class="meta-line">
+          Listing-level smart CapEx overrides are active. Open a listing detail page to review the exact value used there.
+        </p>
+        {% endif %}
       </div>
       {% else %}
       <input
@@ -210,9 +262,149 @@
       <div class="assumption-meta-display">
         <span class="pill subtle-pill">{{ field.source|replace('_', ' ')|title }}</span>
         <span class="pill subtle-pill">{{ field.confidence|title }} confidence</span>
+        {% if key == 'maintenance_percent_of_rent' and smart_maintenance_active %}
+        <span class="pill subtle-pill">Smart listing overrides active</span>
+        {% endif %}
+        {% if key == 'capex_percent_of_rent' and smart_capex_active %}
+        <span class="pill subtle-pill">Smart listing overrides active</span>
+        {% endif %}
       </div>
     </label>
     {% endfor %}
+    {% set rent_field = investment_defaults.market_rent_monthly %}
+    {% set cmhc_reference = market_match.market_reference if market_match and market_match.market_reference else {} %}
+    {% set cmhc_rent_value = cmhc_reference.get('average_rent_monthly') %}
+    <section class="assumption-field assumption-field-wide market-rent-row">
+      <div>
+        <div>
+          <span class="assumption-label-row">
+            <span>{{ rent_field.label }}</span>
+            <span class="info-chip" title="{{ rent_field.help_text }}">i</span>
+            {% if rent_field.help_url %}
+            <a class="help-link" href="{{ rent_field.help_url }}" target="_blank" rel="noreferrer">Source</a>
+            {% endif %}
+          </span>
+          <div class="assumption-meta-display">
+            <span class="pill subtle-pill">{{ rent_field.source|replace('_', ' ')|title }}</span>
+            <span class="pill subtle-pill">{{ rent_field.confidence|title }} confidence</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="market-rent-modes">
+        <section class="source-mode-card {% if rent_field.source == 'manual' %}source-mode-active{% endif %}">
+          <div class="source-mode-header">
+            <div>
+              <p class="eyebrow">Manual</p>
+              <h3>Set value directly</h3>
+            </div>
+            {% if rent_field.source == 'manual' %}
+            <span class="pill subtle-pill">Active</span>
+            {% endif %}
+          </div>
+          <div class="source-mode-body">
+            <input
+              class="source-mode-input"
+              type="number"
+              name="market_rent_monthly"
+              step="{{ rent_field.input_step or '0.1' }}"
+              value="{{ '' if rent_field.value is none else rent_field.value }}"
+            >
+            <button
+              type="submit"
+              formaction="{{ url_for('use_manual_rent_default', saved_search_id=saved_search.id) }}"
+              class="mini-button {% if rent_field.source == 'manual' %}toggle-active{% endif %}"
+            >
+              Apply manual
+            </button>
+          </div>
+        </section>
+
+        <section class="source-mode-card {% if 'cmhc' in rent_field.source %}source-mode-active{% endif %}">
+          <div class="source-mode-header">
+            <div>
+              <p class="eyebrow">CMHC</p>
+              <h3>Use market baseline</h3>
+            </div>
+            {% if 'cmhc' in rent_field.source %}
+            <span class="pill subtle-pill">Active</span>
+            {% endif %}
+          </div>
+          <div class="source-mode-body">
+            <div class="source-mode-value">
+              <strong>{{ cmhc_rent_value|currency if cmhc_rent_value is not none else 'Unavailable' }}</strong>
+              {% if market_match %}
+              <p class="meta-line">{{ market_match.matched_market_name }} {{ market_match.match_type|title }}</p>
+              {% if market_match.notes %}
+              <p class="meta-line">{{ market_match.notes }}</p>
+              {% endif %}
+              {% else %}
+              <p class="meta-line">No CMHC market match is available for this saved search.</p>
+              {% endif %}
+            </div>
+            <button
+              type="submit"
+              formaction="{{ url_for('use_cmhc_rent_default', saved_search_id=saved_search.id) }}"
+              class="mini-button {% if 'cmhc' in rent_field.source %}toggle-active{% endif %}"
+              {% if cmhc_rent_value is none %}disabled{% endif %}
+            >
+              Use CMHC
+            </button>
+          </div>
+        </section>
+
+        <section class="source-mode-card {% if 'ai' in rent_field.source %}source-mode-active{% endif %}">
+          <div class="source-mode-header">
+            <div>
+              <p class="eyebrow">AI</p>
+              <h3>Generate listing values</h3>
+            </div>
+            {% if 'ai' in rent_field.source %}
+            <span class="pill subtle-pill">Active</span>
+            {% endif %}
+          </div>
+          <div class="source-mode-body">
+            <p class="meta-line">Run AI to generate listing-level rent values, then apply them across the underwriting table.</p>
+            <p class="meta-line">Reasoning and confidence are shown on listing detail after acceptance.</p>
+            <div class="toggle-row">
+              <button
+                type="submit"
+                formaction="{{ url_for('preview_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
+                class="mini-button"
+              >
+                Run AI
+              </button>
+              {% if ai_rent_preview and not ai_rent_preview.error and ai_rent_preview.parsed_response.suggestions %}
+              <button
+                type="submit"
+                formaction="{{ url_for('accept_all_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
+                class="mini-button {% if 'ai' in rent_field.source %}toggle-active{% endif %}"
+              >
+                Use AI values
+              </button>
+              {% endif %}
+            </div>
+            <details class="advanced-box source-mode-advanced">
+              <summary>Advanced prompt</summary>
+              <label class="ai-inline-form">
+                <span class="metric-label">Editable prompt</span>
+                <textarea name="prompt_text" rows="5">{{ ai_rent_preview.prompt_text if ai_rent_preview else default_rent_ai_prompt }}</textarea>
+              </label>
+            </details>
+            {% if ai_rent_preview %}
+            <div class="source-mode-status">
+              {% if ai_rent_preview.error %}
+              <p class="ai-error">{{ ai_rent_preview.error }}</p>
+              {% else %}
+              <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
+              <p class="meta-line">{{ ai_rent_preview.parsed_response.suggestions|length }} listing suggestions ready to apply.</p>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+        </section>
+      </div>
+    </section>
     <div class="card-actions">
       <button type="submit" class="button-primary">Save assumptions</button>
     </div>
@@ -273,6 +465,11 @@
             <div class="table-subline">
               {{ row.listing.bedrooms or 'N/A' }} bd | {{ row.listing.bathrooms or 'N/A' }} ba | {{ row.listing.property_type or row.listing.building_type or 'Unknown type' }}
             </div>
+            {% if row.effective_assumptions.maintenance_percent_of_rent.source == 'smart_listing_estimate' or row.effective_assumptions.capex_percent_of_rent.source == 'smart_listing_estimate' %}
+            <div class="table-subline">
+              Smart reserve estimates applied. See listing detail.
+            </div>
+            {% endif %}
           </td>
           <td>
             {% if row.buy_box %}

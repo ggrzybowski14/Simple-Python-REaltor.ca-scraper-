@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import math
+import re
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
+
+BC_HYDRO_RATES_URL = "https://app.bchydro.com/accounts-billing/rates-energy-use/electricity-rates/residential-rates.html"
+FORTISBC_RESIDENTIAL_RATES_URL = "https://www.fortisbc.com/accounts/billing-rates/natural-gas-rates/residential-rates"
+IBC_HOME_COVERAGE_URL = "https://www.ibc.ca/insurance-basics/home/types-of-home-insurance-coverage"
 
 
 DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
@@ -170,7 +176,198 @@ def build_defaults_snapshot_from_form(
                 definition["help_text"] = "Manual saved-search rent value."
             elif key == "vacancy_percent":
                 definition["help_text"] = "Manual saved-search vacancy value."
+            elif key == "utilities_monthly":
+                definition["help_text"] = "Manual landlord-paid utilities estimate."
+            elif key == "insurance_monthly":
+                definition["help_text"] = "Manual insurance estimate."
     return defaults
+
+
+def normalize_property_type_for_rules(saved_search: dict[str, Any]) -> str:
+    property_type = (saved_search.get("property_type") or "").strip().lower()
+    if property_type in {"apartment", "condo"}:
+        return "apartment"
+    if property_type in {"house"}:
+        return "house"
+    return "other"
+
+
+def estimate_rule_based_utilities_monthly(saved_search: dict[str, Any]) -> dict[str, Any]:
+    property_type = normalize_property_type_for_rules(saved_search)
+    beds_min = saved_search.get("beds_min") if isinstance(saved_search.get("beds_min"), int) else 0
+
+    if property_type == "apartment":
+        amount = 45.0
+    elif property_type == "house":
+        amount = 165.0
+    else:
+        amount = 85.0
+
+    if beds_min >= 2:
+        amount += 15.0
+    if beds_min >= 3:
+        amount += 25.0
+    if beds_min >= 4:
+        amount += 35.0
+
+    if property_type == "house":
+        help_text = (
+            "BC-wide rule-based landlord-paid utilities estimate using current BC electricity and gas rate structures "
+            "plus broad house-size heuristics. This is not market-specific."
+        )
+    else:
+        help_text = (
+            "BC-wide rule-based landlord-paid utilities estimate using current BC electricity rates and broad unit-size "
+            "heuristics. This is not market-specific."
+        )
+
+    return {
+        "value": float(round(amount)),
+        "source": "rule_based_bc",
+        "confidence": "low",
+        "help_text": help_text,
+        "help_url": FORTISBC_RESIDENTIAL_RATES_URL if property_type == "house" else BC_HYDRO_RATES_URL,
+    }
+
+
+def estimate_rule_based_insurance_monthly(saved_search: dict[str, Any]) -> dict[str, Any]:
+    property_type = normalize_property_type_for_rules(saved_search)
+    beds_min = saved_search.get("beds_min") if isinstance(saved_search.get("beds_min"), int) else 0
+
+    if property_type == "apartment":
+        amount = 40.0
+    elif property_type == "house":
+        amount = 125.0
+    else:
+        amount = 70.0
+
+    if beds_min >= 3:
+        amount += 10.0
+    if beds_min >= 4:
+        amount += 15.0
+
+    return {
+        "value": float(round(amount)),
+        "source": "rule_based_bc",
+        "confidence": "low",
+        "help_text": (
+            "BC-wide rule-based insurance estimate using broad property-type risk buckets. This is not market-specific "
+            "and should be treated as a placeholder until a quoted figure is known."
+        ),
+        "help_url": IBC_HOME_COVERAGE_URL,
+    }
+
+
+def parse_built_year(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = re.search(r"(19|20)\d{2}", value)
+    if not match:
+        return None
+    year = int(match.group(0))
+    current_year = datetime.utcnow().year
+    if 1800 <= year <= current_year:
+        return year
+    return None
+
+
+def estimate_smart_reserve_percentages(listing: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    description = (listing.get("listing_description") or "").lower()
+    property_type = normalize_property_type_for_rules(listing)
+    building_type = (listing.get("building_type") or "").lower()
+    built_year = parse_built_year(listing.get("built_in"))
+    hoa_present = parse_money_amount(listing.get("hoa_fees")) not in {None, 0}
+    current_year = datetime.utcnow().year
+
+    maintenance = 8.0
+    capex = 5.0
+    drivers: list[str] = []
+
+    if built_year is not None:
+        age = current_year - built_year
+        if age <= 10:
+            maintenance, capex = 4.0, 4.0
+            drivers.append(f"newer build ({built_year})")
+        elif age <= 30:
+            maintenance, capex = 6.0, 7.0
+            drivers.append(f"mid-life build ({built_year})")
+        else:
+            maintenance, capex = 9.0, 12.0
+            drivers.append(f"older build ({built_year})")
+
+    positive_signals = [
+        "renovated",
+        "updated",
+        "new roof",
+        "new windows",
+        "new furnace",
+        "new hot water tank",
+        "updated plumbing",
+        "updated electrical",
+        "modernized",
+        "turn-key",
+        "turnkey",
+        "recently updated",
+    ]
+    negative_signals = [
+        "original condition",
+        "needs work",
+        "fixer",
+        "handyman",
+        "bring your ideas",
+        "as-is",
+        "tlc",
+        "deferred maintenance",
+        "tear down",
+        "end of life",
+    ]
+
+    positive_hits = sum(1 for keyword in positive_signals if keyword in description)
+    negative_hits = sum(1 for keyword in negative_signals if keyword in description)
+
+    if positive_hits:
+        maintenance -= min(2.0, float(positive_hits))
+        capex -= min(3.0, float(positive_hits + 1))
+        drivers.append("update signals in listing")
+    if negative_hits:
+        maintenance += min(3.0, float(negative_hits + 1))
+        capex += min(4.0, float(negative_hits + 2))
+        drivers.append("condition-risk signals in listing")
+
+    if property_type == "apartment" or "condo" in building_type or hoa_present:
+        maintenance -= 1.0
+        capex -= 2.0
+        drivers.append("condo/strata profile")
+    elif property_type == "house" or "single family" in building_type or "house" in building_type:
+        maintenance += 1.0
+        capex += 1.0
+        drivers.append("single-family profile")
+
+    if property_type == "apartment":
+        maintenance = min(max(maintenance, 3.0), 10.0)
+        capex = min(max(capex, 3.0), 10.0)
+    elif property_type == "house":
+        maintenance = min(max(maintenance, 4.0), 12.0)
+        capex = min(max(capex, 4.0), 15.0)
+    else:
+        maintenance = min(max(maintenance, 4.0), 11.0)
+        capex = min(max(capex, 4.0), 12.0)
+
+    driver_text = ", ".join(drivers) if drivers else "default reserve posture"
+    return {
+        "maintenance_percent_of_rent": {
+            "value": float(round(maintenance, 1)),
+            "source": "smart_listing_estimate",
+            "confidence": "medium",
+            "help_text": f"Smart listing estimate based on {driver_text}.",
+        },
+        "capex_percent_of_rent": {
+            "value": float(round(capex, 1)),
+            "source": "smart_listing_estimate",
+            "confidence": "medium",
+            "help_text": f"Smart listing estimate based on {driver_text}.",
+        },
+    }
 
 
 def parse_money_amount(value: str | None) -> float | None:
@@ -215,6 +412,34 @@ def build_effective_assumptions(
         effective["market_rent_monthly"]["confidence"] = "medium"
         effective["market_rent_monthly"]["help_text"] = (
             "Saved AI listing rent value." if rent_override_source.startswith("ai_") else "Saved listing-specific rent override."
+        )
+    override_fields = [
+        (
+            "maintenance_percent_of_rent",
+            "maintenance_percent_source",
+            "maintenance_percent_confidence",
+            "maintenance_percent_help_text",
+        ),
+        (
+            "capex_percent_of_rent",
+            "capex_percent_source",
+            "capex_percent_confidence",
+            "capex_percent_help_text",
+        ),
+    ]
+    for field_key, source_key, confidence_key, help_text_key in override_fields:
+        override_value = (
+            parse_form_number(str(normalized_overrides.get(field_key)))
+            if normalized_overrides.get(field_key) is not None
+            else None
+        )
+        if override_value is None:
+            continue
+        effective[field_key]["value"] = override_value
+        effective[field_key]["source"] = str(normalized_overrides.get(source_key) or "listing_override")
+        effective[field_key]["confidence"] = str(normalized_overrides.get(confidence_key) or "medium")
+        effective[field_key]["help_text"] = str(
+            normalized_overrides.get(help_text_key) or effective[field_key].get("help_text") or ""
         )
     if annual_taxes is not None:
         effective["property_tax_annual"] = {
