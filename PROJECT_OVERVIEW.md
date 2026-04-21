@@ -160,6 +160,9 @@ What is already implemented:
 - listing-detail underwriting section
 - source-aware market rent and vacancy controls
 - CMHC market-reference import and match scaffolding
+- AI rent preview inside the `Market Rent Monthly` card
+- `Use AI` flow that applies listing-level AI rent suggestions across the underwriting table
+- listing-detail panel showing accepted AI rent reasoning
 
 ### Strategy Scope For V1
 
@@ -303,11 +306,10 @@ The next session should focus on AI source integration rather than more underwri
 
 Concrete next step:
 
-- move AI rent controls into the `Market Rent Monthly` card
-- let the user inspect and edit the prompt inline
-- show the response inline
-- let `Use AI` behave as a source mode like `Use manual` and `Use CMHC`
-- then mirror the same pattern for `Vacancy %`
+- mirror the same source-mode pattern for `Vacancy %`
+- decide whether vacancy AI should write one saved-search-level value or a reviewed suggestion before acceptance
+- tighten the current AI rent preview layout so the expanded card feels cleaner and less disruptive
+- optionally surface a lighter AI reasoning hint in the underwriting table, while keeping the full explanation on listing detail
 
 Important product rule:
 

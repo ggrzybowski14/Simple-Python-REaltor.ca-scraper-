@@ -49,7 +49,7 @@
   </div>
   <form method="post" action="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}" class="assumptions-grid">
     {% for key, field in investment_defaults.items() %}
-    <label class="assumption-field">
+    <label class="assumption-field{% if key == 'market_rent_monthly' and ai_rent_preview %} assumption-field-wide{% endif %}">
       <span class="assumption-label-row">
         <span>{{ field.label }}</span>
         <span class="info-chip" title="{{ field.help_text }}">i</span>
@@ -116,6 +116,88 @@
             Use CMHC
           </button>
         </div>
+        <details class="market-inline-panel compact-market-panel ai-inline-panel" {% if ai_rent_preview %}open{% endif %}>
+          <summary class="market-inline-header">
+            <span class="metric-label">AI rent suggestions</span>
+            <strong>{% if 'ai' in field.source %}AI active{% else %}Preview and apply{% endif %}</strong>
+          </summary>
+          <div class="market-inline-copy">
+            <p class="meta-line">Run AI against the current listings, review the prompt and response, then apply the suggestions across the underwriting table.</p>
+          </div>
+          <label class="ai-inline-form">
+            <span class="metric-label">Editable prompt</span>
+            <textarea name="prompt_text" rows="8">{{ ai_rent_preview.prompt_text if ai_rent_preview else default_rent_ai_prompt }}</textarea>
+          </label>
+          <button
+            type="submit"
+            formaction="{{ url_for('preview_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
+            class="mini-button"
+          >
+            Run AI preview
+          </button>
+          {% if ai_rent_preview %}
+          <div class="ai-preview-block inline-ai-preview">
+            {% if ai_rent_preview.error %}
+            <p class="ai-error">{{ ai_rent_preview.error }}</p>
+            {% else %}
+            <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
+            <div class="toggle-row">
+              <button
+                type="submit"
+                formaction="{{ url_for('accept_all_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
+                class="mini-button toggle-active"
+              >
+                Use AI
+              </button>
+            </div>
+            <details class="advanced-box">
+              <summary>Prompt payload preview</summary>
+              <pre class="log-block">{{ ai_rent_preview.payload|tojson(indent=2) }}</pre>
+            </details>
+            <details class="advanced-box">
+              <summary>Raw AI response</summary>
+              <pre class="log-block">{{ ai_rent_preview.raw_response_text }}</pre>
+            </details>
+            {% if ai_rent_preview.parsed_response.suggestions %}
+            <div class="table-wrap lower-grid">
+              <table class="data-table compact-ai-table">
+                <thead>
+                  <tr>
+                    <th>Listing</th>
+                    <th>Suggested Rent</th>
+                    <th>Confidence</th>
+                    <th>Direction</th>
+                    <th>Reasoning</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for suggestion in ai_rent_preview.parsed_response.suggestions %}
+                  <tr>
+                    {% set preview_listing = ai_preview_listing_lookup.get(suggestion.listing_id) %}
+                    <td>
+                      {% if preview_listing %}
+                      {{ preview_listing.address }}
+                      <div class="table-subline">
+                        {{ preview_listing.bedrooms or 'N/A' }} bd | {{ preview_listing.bathrooms or 'N/A' }} ba
+                      </div>
+                      {% else %}
+                      #{{ suggestion.listing_id }}
+                      {% endif %}
+                    </td>
+                    <td>{{ suggestion.suggested_rent_monthly|currency }}</td>
+                    <td>{{ suggestion.confidence|title }}</td>
+                    <td>{{ suggestion.adjustment_direction|replace('_', ' ')|title }}</td>
+                    <td>{{ suggestion.reasoning }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% endif %}
+            {% endif %}
+          </div>
+          {% endif %}
+        </details>
       </div>
       {% else %}
       <input
@@ -135,71 +217,6 @@
       <button type="submit" class="button-primary">Save assumptions</button>
     </div>
   </form>
-</section>
-
-<section class="panel lower-grid">
-  <div class="panel-header">
-    <p class="eyebrow">AI Rent Suggestions</p>
-    <h2>Prompt, response, and acceptance workflow</h2>
-  </div>
-  <form method="post" action="{{ url_for('preview_ai_rent_suggestions', saved_search_id=saved_search.id) }}" class="scrape-form">
-    <label>
-      <span>Editable prompt</span>
-      <textarea name="prompt_text" rows="12">{{ ai_rent_preview.prompt_text if ai_rent_preview else default_rent_ai_prompt }}</textarea>
-    </label>
-    <button type="submit" class="button-secondary">Suggest rents with AI</button>
-  </form>
-  {% if ai_rent_preview %}
-  <div class="ai-preview-block">
-    {% if ai_rent_preview.error %}
-    <p class="ai-error">{{ ai_rent_preview.error }}</p>
-    {% else %}
-    <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
-    <details class="advanced-box">
-      <summary>Prompt payload preview</summary>
-      <pre class="log-block">{{ ai_rent_preview.payload|tojson(indent=2) }}</pre>
-    </details>
-    <details class="advanced-box">
-      <summary>Raw AI response</summary>
-      <pre class="log-block">{{ ai_rent_preview.raw_response_text }}</pre>
-    </details>
-    {% if ai_rent_preview.parsed_response.suggestions %}
-    <div class="table-wrap lower-grid">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Listing</th>
-            <th>Suggested Rent</th>
-            <th>Confidence</th>
-            <th>Direction</th>
-            <th>Reasoning</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for suggestion in ai_rent_preview.parsed_response.suggestions %}
-          <tr>
-            <td>#{{ suggestion.listing_id }}</td>
-            <td>{{ suggestion.suggested_rent_monthly|currency }}</td>
-            <td>{{ suggestion.confidence|title }}</td>
-            <td>{{ suggestion.adjustment_direction|replace('_', ' ')|title }}</td>
-            <td>{{ suggestion.reasoning }}</td>
-            <td>
-              <form method="post" action="{{ url_for('accept_ai_rent_suggestion', saved_search_id=saved_search.id) }}">
-                <input type="hidden" name="listing_id" value="{{ suggestion.listing_id }}">
-                <input type="hidden" name="suggested_rent_monthly" value="{{ suggestion.suggested_rent_monthly }}">
-                <button type="submit" class="mini-button">Accept</button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-    {% endif %}
-  </div>
-  {% endif %}
 </section>
 
 <section class="panel lower-grid">
@@ -295,7 +312,13 @@
               <button type="submit" class="mini-button">Save</button>
             </form>
             <div class="table-subline">
+              {% if row.effective_assumptions.market_rent_monthly.source.startswith('ai_') %}
+              AI Value Used
+              {% elif row.effective_assumptions.market_rent_monthly.source == 'listing_override' %}
+              Manual Override
+              {% else %}
               {{ row.effective_assumptions.market_rent_monthly.source|replace('_', ' ')|title }}
+              {% endif %}
             </div>
           </td>
           <td class="numeric-cell {% if row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow < 0 %}negative-metric{% elif row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow > 0 %}positive-metric{% endif %}">{{ row.metrics.monthly_cash_flow|currency }}</td>

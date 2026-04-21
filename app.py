@@ -641,6 +641,11 @@ def create_app() -> Flask:
             market_match=market_match,
             default_rent_ai_prompt=build_rent_ai_prompt_text(),
             ai_rent_preview=AI_RENT_PREVIEWS.get(saved_search_id),
+            ai_preview_listing_lookup={
+                normalize_listing_id(listing.get("listing_id")): listing
+                for listing in active_listings
+                if normalize_listing_id(listing.get("listing_id")) is not None
+            },
         )
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/defaults", methods=["POST"])
@@ -762,7 +767,10 @@ def create_app() -> Flask:
             config,
             saved_search_id,
             listing_id,
-            {"market_rent_monthly": suggested_rent},
+            {
+                "market_rent_monthly": suggested_rent,
+                "market_rent_source": "ai_listing_suggestion",
+            },
         )
         preview = AI_RENT_PREVIEWS.get(saved_search_id) or {}
         suggestion_lookup = {
@@ -786,6 +794,70 @@ def create_app() -> Flask:
         )
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_accepted=listing_id))
 
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/ai-rent-accept-all", methods=["POST"])
+    def accept_all_ai_rent_suggestions(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        preview = AI_RENT_PREVIEWS.get(saved_search_id) or {}
+        suggestions = (preview.get("parsed_response") or {}).get("suggestions", [])
+        valid_suggestions: list[dict[str, Any]] = []
+        for item in suggestions:
+            if not isinstance(item, dict):
+                continue
+            listing_id = normalize_listing_id(item.get("listing_id"))
+            suggested_rent = parse_optional_int(str(item.get("suggested_rent_monthly")))
+            if listing_id is None or suggested_rent is None:
+                continue
+            normalized_item = dict(item)
+            normalized_item["listing_id"] = listing_id
+            normalized_item["suggested_rent_monthly"] = suggested_rent
+            valid_suggestions.append(normalized_item)
+        if not valid_suggestions:
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_missing=1))
+
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+
+        clear_listing_rent_overrides_for_saved_search(config, saved_search_id)
+        for item in valid_suggestions:
+            listing_id = item["listing_id"]
+            suggested_rent = item["suggested_rent_monthly"]
+            persist_listing_investment_override(
+                config,
+                saved_search_id,
+                listing_id,
+                {
+                    "market_rent_monthly": suggested_rent,
+                    "market_rent_source": "ai_listing_suggestion",
+                },
+            )
+            persist_ai_underwriting_suggestion(
+                config,
+                saved_search_id=saved_search_id,
+                listing_id=listing_id,
+                suggestion_type="listing_rent",
+                status="accepted",
+                prompt_text=preview.get("prompt_text", build_rent_ai_prompt_text()),
+                model=preview.get("model"),
+                input_context=preview.get("payload", {}),
+                raw_response_text=preview.get("raw_response_text", ""),
+                parsed_suggestion=item,
+                accepted_value=suggested_rent,
+            )
+
+        average_rent = round(sum(item["suggested_rent_monthly"] for item in valid_suggestions) / len(valid_suggestions))
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["market_rent_monthly"]["value"] = float(average_rent)
+        updated_defaults["market_rent_monthly"]["source"] = "ai_listing_suggestions"
+        updated_defaults["market_rent_monthly"]["confidence"] = "medium"
+        updated_defaults["market_rent_monthly"]["help_text"] = (
+            "AI listing rent suggestions applied across the active table. "
+            "This shared value is the average of the accepted listing-level AI rents."
+        )
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_applied=len(valid_suggestions)))
+
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/listings/<int:listing_id>/rent", methods=["POST"])
     def save_listing_rent_override(saved_search_id: int, listing_id: int) -> Any:
         config = get_supabase_read_config()
@@ -797,7 +869,10 @@ def create_app() -> Flask:
             config,
             saved_search_id,
             listing_id,
-            {"market_rent_monthly": parse_optional_int(rent_override)},
+            {
+                "market_rent_monthly": parse_optional_int(rent_override),
+                "market_rent_source": "listing_override",
+            },
         )
         redirect_target = (flask_request.form.get("redirect_target") or "").strip()
         return_to = (flask_request.form.get("return_to") or "").strip()
@@ -826,6 +901,12 @@ def create_app() -> Flask:
         investment_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
         listing_overrides = fetch_listing_investment_overrides(config, saved_search_id, [listing_id]).get(listing_id, {})
         underwriting = calculate_underwriting(listing, investment_defaults, listing_overrides=listing_overrides)
+        latest_ai_rent_suggestion = fetch_latest_ai_underwriting_suggestion(
+            config,
+            saved_search_id=saved_search_id,
+            listing_id=listing_id,
+            suggestion_type="listing_rent",
+        )
         return render_template(
             "listing_detail.html",
             saved_search=saved_search,
@@ -835,6 +916,7 @@ def create_app() -> Flask:
             investment_defaults=investment_defaults,
             underwriting=underwriting,
             listing_overrides=listing_overrides,
+            latest_ai_rent_suggestion=latest_ai_rent_suggestion,
             return_to=flask_request.args.get("return_to"),
             back_query=flask_request.query_string.decode("utf-8"),
         )
@@ -1188,10 +1270,11 @@ def clear_listing_rent_overrides_for_saved_search(
         snapshot = row.get("overrides_snapshot")
         if not isinstance(listing_id, int) or not isinstance(snapshot, dict):
             continue
-        if "market_rent_monthly" not in snapshot:
+        if "market_rent_monthly" not in snapshot and "market_rent_source" not in snapshot:
             continue
         updated_snapshot = dict(snapshot)
         updated_snapshot.pop("market_rent_monthly", None)
+        updated_snapshot.pop("market_rent_source", None)
         supabase_patch(
             config,
             "listing_investment_overrides",
@@ -1237,6 +1320,33 @@ def persist_ai_underwriting_suggestion(
         )
     except RuntimeError:
         return
+
+
+def fetch_latest_ai_underwriting_suggestion(
+    config: SupabaseReadConfig,
+    *,
+    saved_search_id: int,
+    listing_id: int,
+    suggestion_type: str,
+) -> dict[str, Any] | None:
+    try:
+        result = supabase_get(
+            config,
+            "ai_underwriting_suggestions",
+            query={
+                "saved_search_id": f"eq.{saved_search_id}",
+                "listing_id": f"eq.{listing_id}",
+                "suggestion_type": f"eq.{suggestion_type}",
+                "status": "eq.accepted",
+                "select": "accepted_value,model,parsed_suggestion,created_at",
+                "order": "created_at.desc",
+                "limit": 1,
+            },
+        )
+    except RuntimeError:
+        return None
+    rows = result if isinstance(result, list) else []
+    return rows[0] if rows else None
 
 
 def count_sparse_listings(listings: list[dict[str, Any]]) -> int:

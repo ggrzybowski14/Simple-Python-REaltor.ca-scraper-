@@ -209,10 +209,13 @@ def build_effective_assumptions(
     hoa_monthly = parse_money_amount(listing.get("hoa_fees"))
     rent_override = parse_form_number(str(normalized_overrides.get("market_rent_monthly"))) if normalized_overrides.get("market_rent_monthly") is not None else None
     if rent_override is not None:
+        rent_override_source = str(normalized_overrides.get("market_rent_source") or "listing_override")
         effective["market_rent_monthly"]["value"] = rent_override
-        effective["market_rent_monthly"]["source"] = "listing_override"
+        effective["market_rent_monthly"]["source"] = rent_override_source
         effective["market_rent_monthly"]["confidence"] = "medium"
-        effective["market_rent_monthly"]["help_text"] = "Saved listing-specific rent override."
+        effective["market_rent_monthly"]["help_text"] = (
+            "Saved AI listing rent value." if rent_override_source.startswith("ai_") else "Saved listing-specific rent override."
+        )
     if annual_taxes is not None:
         effective["property_tax_annual"] = {
             "value": annual_taxes,

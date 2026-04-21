@@ -23,9 +23,11 @@ Current state:
 - Underwriting persistence working: saved-search defaults plus listing-level rent overrides
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
+- AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
+- Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
-- Next active step: move AI rent and vacancy controls into the assumptions cards and complete the AI source mode
+- Next active step: build the vacancy-side AI flow and tighten the rent-preview UI layout
 
 ## What It Does Today
 
@@ -221,6 +223,7 @@ Current website scope:
   - sorting within each bucket by strongest monthly cash flow first
   - saved-search underwriting defaults
   - local source controls for market rent and vacancy
+  - AI rent preview and `Use AI` flow inside the `Market Rent Monthly` card
   - listing-level rent overrides
 - listing-detail underwriting section with:
   - monthly cash flow
@@ -228,6 +231,7 @@ Current website scope:
   - cash-on-cash
   - rent-to-price ratio
   - assumptions and source summary
+  - accepted AI rent reasoning when present
 
 Current website limitations:
 
@@ -238,7 +242,8 @@ Current website limitations:
 - no dedicated run comparison or retry UX yet
 - no explicit “why this listing was reused vs re-scraped” UI yet
 - site result counts can still fluctuate while Realtor.ca settles
-- AI underwriting flow is scaffolded but not yet fully integrated into the `Market Rent Monthly` and `Vacancy %` cards
+- vacancy-side AI flow is not built yet
+- rent-side AI preview works but still needs a more polished layout treatment
 - CMHC rent data is currently apartment-oriented, so house searches can still require manual or AI adjustment
 
 ## Product Direction

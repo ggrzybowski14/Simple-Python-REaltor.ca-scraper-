@@ -337,6 +337,43 @@ textarea {
   gap: 0.55rem;
 }
 
+.ai-inline-panel {
+  margin-top: 0.15rem;
+}
+
+.ai-inline-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.inline-ai-preview {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.compact-ai-table th,
+.compact-ai-table td {
+  font-size: 0.9rem;
+}
+
+.compact-ai-table {
+  table-layout: fixed;
+}
+
+.compact-ai-table th:first-child,
+.compact-ai-table td:first-child {
+  width: 22%;
+}
+
+.compact-ai-table th:nth-child(2),
+.compact-ai-table td:nth-child(2),
+.compact-ai-table th:nth-child(3),
+.compact-ai-table td:nth-child(3),
+.compact-ai-table th:nth-child(4),
+.compact-ai-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
 .toggle-active {
   background: rgba(47, 107, 79, 0.12);
   color: var(--green);

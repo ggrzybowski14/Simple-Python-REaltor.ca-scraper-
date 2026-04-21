@@ -138,6 +138,32 @@
 
   <div class="panel">
     <div class="panel-header">
+      <p class="eyebrow">AI Rent</p>
+      <h2>Latest accepted reasoning</h2>
+    </div>
+    {% if latest_ai_rent_suggestion and latest_ai_rent_suggestion.parsed_suggestion %}
+    {% set ai_reasoning = latest_ai_rent_suggestion.parsed_suggestion %}
+    <div class="facts-grid">
+      <div class="fact-row"><span>Suggested rent</span><strong>{{ latest_ai_rent_suggestion.accepted_value|currency }}</strong></div>
+      <div class="fact-row"><span>Confidence</span><strong>{{ ai_reasoning.confidence|title if ai_reasoning.confidence else '—' }}</strong></div>
+      <div class="fact-row"><span>Direction</span><strong>{{ ai_reasoning.adjustment_direction|replace('_', ' ')|title if ai_reasoning.adjustment_direction else '—' }}</strong></div>
+      <div class="fact-row"><span>Model</span><strong>{{ latest_ai_rent_suggestion.model or '—' }}</strong></div>
+    </div>
+    {% if ai_reasoning.reasoning %}
+    <div class="description-block lower-grid">
+      {{ ai_reasoning.reasoning }}
+    </div>
+    {% endif %}
+    <p class="meta-line">Accepted at {{ latest_ai_rent_suggestion.created_at }}</p>
+    {% else %}
+    <p class="meta-line">No accepted AI rent suggestion has been saved for this listing yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
       <p class="eyebrow">Assumptions Used</p>
       <h2>Sources and defaults</h2>
     </div>
