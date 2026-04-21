@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+
+{% block title %}{{ saved_search.name }} Underwriting | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<div class="detail-back-row">
+  <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
+</div>
+
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Investment Analyzer</p>
+    <h1>{{ saved_search.name }}</h1>
+    <p class="hero-copy">
+      Underwriting all active listings for this saved search using one shared assumptions panel in V1.
+    </p>
+    <p class="hero-meta-line">
+      {% if buy_box.applied %}
+      Rows are grouped by the currently saved buy-box results, then sorted by strongest monthly cash flow within each bucket.
+      {% else %}
+      No saved buy box is active, so all listings are shown in one underwriting bucket.
+      {% endif %}
+    </p>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-label">Active Listings</span>
+      <strong>{{ underwriting_rows|length }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Market Rent Default</span>
+      <strong>{{ investment_defaults.market_rent_monthly.value|currency }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Vacancy</span>
+      <strong>{{ investment_defaults.vacancy_percent.value|percent1 }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Interest Rate</span>
+      <strong>{{ investment_defaults.interest_rate_percent.value|percent1 }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="panel lower-grid">
+  <div class="panel-header">
+    <p class="eyebrow">Assumptions</p>
+    <h2>Saved-search defaults</h2>
+  </div>
+  <form method="post" action="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}" class="assumptions-grid">
+    {% for key, field in investment_defaults.items() %}
+    <label class="assumption-field">
+      <span class="assumption-label-row">
+        <span>{{ field.label }}</span>
+        <span class="info-chip" title="{{ field.help_text }}">i</span>
+        {% if field.help_url %}
+        <a class="help-link" href="{{ field.help_url }}" target="_blank" rel="noreferrer">Source</a>
+        {% endif %}
+      </span>
+      {% if key == 'vacancy_percent' and market_match %}
+      <details class="market-inline-panel compact-market-panel">
+        <summary class="market-inline-header">
+          <span class="metric-label">Current source</span>
+          <strong>{{ field.source|replace('_', ' ')|title }}</strong>
+        </summary>
+        <div class="market-inline-copy">
+          <strong>{{ market_match.market_reference.source|upper }} {{ market_match.match_type|title }}</strong>
+          <p class="meta-line">Vacancy reference for {{ saved_search.location }} uses {{ market_match.matched_market_name }}.</p>
+          <p class="meta-line">Confidence: {{ market_match.confidence|title }}{% if market_match.notes %} | {{ market_match.notes }}{% endif %}</p>
+        </div>
+        <div class="market-inline-metrics">
+          <span class="pill">{{ market_match.market_reference.vacancy_rate_percent|percent1 }} vacancy</span>
+          {% if market_match.market_reference.source_url %}
+          <a class="help-link" href="{{ market_match.market_reference.source_url }}" target="_blank" rel="noreferrer">Source</a>
+          {% endif %}
+        </div>
+        <div class="toggle-row">
+          <button
+            type="submit"
+            formaction="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
+          >
+            Use manual
+          </button>
+          <button
+            type="submit"
+            formaction="{{ url_for('use_cmhc_vacancy_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if 'cmhc' in field.source %}toggle-active{% endif %}"
+          >
+            Use CMHC
+          </button>
+        </div>
+      </details>
+      {% endif %}
+      {% if key == 'market_rent_monthly' %}
+      <div class="local-action-group">
+        <input
+          type="number"
+          name="{{ key }}"
+          step="{{ field.input_step or '0.1' }}"
+          value="{{ '' if field.value is none else field.value }}"
+        >
+        <div class="toggle-row">
+          <button
+            type="submit"
+            formaction="{{ url_for('use_manual_rent_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
+          >
+            Apply manual
+          </button>
+          <button
+            type="submit"
+            formaction="{{ url_for('use_cmhc_rent_default', saved_search_id=saved_search.id) }}"
+            class="mini-button {% if 'cmhc' in field.source %}toggle-active{% endif %}"
+          >
+            Use CMHC
+          </button>
+        </div>
+      </div>
+      {% else %}
+      <input
+        type="number"
+        name="{{ key }}"
+        step="{{ field.input_step or '0.1' }}"
+        value="{{ '' if field.value is none else field.value }}"
+      >
+      {% endif %}
+      <div class="assumption-meta-display">
+        <span class="pill subtle-pill">{{ field.source|replace('_', ' ')|title }}</span>
+        <span class="pill subtle-pill">{{ field.confidence|title }} confidence</span>
+      </div>
+    </label>
+    {% endfor %}
+    <div class="card-actions">
+      <button type="submit" class="button-primary">Save assumptions</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel lower-grid">
+  <div class="panel-header">
+    <p class="eyebrow">AI Rent Suggestions</p>
+    <h2>Prompt, response, and acceptance workflow</h2>
+  </div>
+  <form method="post" action="{{ url_for('preview_ai_rent_suggestions', saved_search_id=saved_search.id) }}" class="scrape-form">
+    <label>
+      <span>Editable prompt</span>
+      <textarea name="prompt_text" rows="12">{{ ai_rent_preview.prompt_text if ai_rent_preview else default_rent_ai_prompt }}</textarea>
+    </label>
+    <button type="submit" class="button-secondary">Suggest rents with AI</button>
+  </form>
+  {% if ai_rent_preview %}
+  <div class="ai-preview-block">
+    {% if ai_rent_preview.error %}
+    <p class="ai-error">{{ ai_rent_preview.error }}</p>
+    {% else %}
+    <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
+    <details class="advanced-box">
+      <summary>Prompt payload preview</summary>
+      <pre class="log-block">{{ ai_rent_preview.payload|tojson(indent=2) }}</pre>
+    </details>
+    <details class="advanced-box">
+      <summary>Raw AI response</summary>
+      <pre class="log-block">{{ ai_rent_preview.raw_response_text }}</pre>
+    </details>
+    {% if ai_rent_preview.parsed_response.suggestions %}
+    <div class="table-wrap lower-grid">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Listing</th>
+            <th>Suggested Rent</th>
+            <th>Confidence</th>
+            <th>Direction</th>
+            <th>Reasoning</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for suggestion in ai_rent_preview.parsed_response.suggestions %}
+          <tr>
+            <td>#{{ suggestion.listing_id }}</td>
+            <td>{{ suggestion.suggested_rent_monthly|currency }}</td>
+            <td>{{ suggestion.confidence|title }}</td>
+            <td>{{ suggestion.adjustment_direction|replace('_', ' ')|title }}</td>
+            <td>{{ suggestion.reasoning }}</td>
+            <td>
+              <form method="post" action="{{ url_for('accept_ai_rent_suggestion', saved_search_id=saved_search.id) }}">
+                <input type="hidden" name="listing_id" value="{{ suggestion.listing_id }}">
+                <input type="hidden" name="suggested_rent_monthly" value="{{ suggestion.suggested_rent_monthly }}">
+                <button type="submit" class="mini-button">Accept</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel lower-grid">
+  <div class="panel-header">
+    <p class="eyebrow">Underwriting Table</p>
+    <h2>All active listings</h2>
+  </div>
+  <div class="table-legend">
+    <span class="pill verdict-promising">Promising</span>
+    <span class="pill verdict-borderline">Borderline</span>
+    <span class="pill verdict-weak">Weak</span>
+    {% if buy_box.applied %}
+    <span class="pill status-succeeded">Likely</span>
+    <span class="pill ai-pill ai-maybe">Maybe</span>
+    <span class="pill status-failed">Unlikely</span>
+    {% endif %}
+  </div>
+  {% if underwriting_rows %}
+  <div class="table-wrap">
+    <table class="data-table underwriting-table">
+      <thead>
+        <tr>
+          <th>Listing</th>
+          <th>Buy Box</th>
+          <th>Price</th>
+          <th>Taxes</th>
+          <th>HOA</th>
+          <th>Rent</th>
+          <th>Cash Flow</th>
+          <th>Cap Rate</th>
+          <th>Cash-On-Cash</th>
+          <th>Rent / Price</th>
+          <th>Verdict</th>
+          <th>Warnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set current_group = namespace(label='') %}
+        {% for row in underwriting_rows %}
+        {% set group_label = row.buy_box.label if row.buy_box else 'All Listings' %}
+        {% if current_group.label != group_label %}
+        {% set current_group.label = group_label %}
+        <tr class="group-divider-row">
+          <td colspan="12">
+            <div class="group-divider">
+              <strong>Buy Box Bucket: {{ group_label }}</strong>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td class="listing-cell">
+            <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=row.listing.listing_id, return_to='investment_analyzer') }}">{{ row.listing.address }}</a>
+            <div class="table-subline">
+              {{ row.listing.bedrooms or 'N/A' }} bd | {{ row.listing.bathrooms or 'N/A' }} ba | {{ row.listing.property_type or row.listing.building_type or 'Unknown type' }}
+            </div>
+          </td>
+          <td>
+            {% if row.buy_box %}
+            <span class="pill {% if row.buy_box.label == 'Likely' %}status-succeeded{% elif row.buy_box.label == 'Maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}">{{ row.buy_box.label }}</span>
+            {% if row.buy_box.ai_verdict %}
+            <div class="table-subline">AI {{ row.buy_box.ai_verdict|title }}</div>
+            {% endif %}
+            {% if row.buy_box.reasons %}
+            <div class="table-subline">{{ row.buy_box.reasons[0] }}</div>
+            {% endif %}
+            {% else %}
+            <span class="table-subline">No buy box</span>
+            {% endif %}
+          </td>
+          <td class="numeric-cell">{{ row.metrics.purchase_price|currency }}</td>
+          <td>
+            {% if row.metrics.monthly_property_tax is not none %}
+            <div class="numeric-cell">{{ (row.metrics.monthly_property_tax * 12)|currency }}</div>
+            <div class="table-subline">Scraped</div>
+            {% else %}
+            <span class="warning-text">Warning</span>
+            <div class="table-subline">Missing taxes</div>
+            {% endif %}
+          </td>
+          <td class="numeric-cell">{{ row.metrics.monthly_hoa|currency }}</td>
+          <td>
+            <form method="post" action="{{ url_for('save_listing_rent_override', saved_search_id=saved_search.id, listing_id=row.listing.listing_id) }}" class="table-edit-form">
+              <input type="hidden" name="redirect_target" value="investment_analyzer">
+              <input
+                class="table-input"
+                type="number"
+                name="market_rent_monthly"
+                min="0"
+                step="50"
+                value="{{ '' if row.metrics.gross_monthly_rent is none else row.metrics.gross_monthly_rent|int }}"
+              >
+              <button type="submit" class="mini-button">Save</button>
+            </form>
+            <div class="table-subline">
+              {{ row.effective_assumptions.market_rent_monthly.source|replace('_', ' ')|title }}
+            </div>
+          </td>
+          <td class="numeric-cell {% if row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow < 0 %}negative-metric{% elif row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow > 0 %}positive-metric{% endif %}">{{ row.metrics.monthly_cash_flow|currency }}</td>
+          <td class="numeric-cell">{{ row.metrics.cap_rate|percent1 }}</td>
+          <td class="numeric-cell">{{ row.metrics.cash_on_cash_return|percent1 }}</td>
+          <td class="numeric-cell">{{ row.metrics.rent_to_price_ratio|percent1 }}</td>
+          <td><span class="pill verdict-{{ row.verdict.slug }}">{{ row.verdict.label }}</span></td>
+          <td>
+            {% if row.warnings %}
+            <div class="warning-list">
+              {% for warning in row.warnings %}
+              <span class="pill status-running">{{ warning }}</span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="table-subline">None</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-state">No active listings are available to underwrite yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -4,6 +4,9 @@
 
 {% block content %}
 <div class="detail-back-row">
+  {% if return_to == 'investment_analyzer' %}
+  <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to underwriting</a>
+  {% endif %}
   <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}{% if back_query %}?{{ back_query }}{% endif %}">Back to saved search</a>
 </div>
 
@@ -104,6 +107,67 @@
     {% endif %}
     <div class="detail-actions">
       <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing on Realtor.ca</a>
+    </div>
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Underwriting</p>
+      <h2>Computed metrics</h2>
+    </div>
+    <div class="facts-grid">
+      <div class="fact-row"><span>Market rent</span><strong>{{ underwriting.metrics.gross_monthly_rent|currency }}</strong></div>
+      <div class="fact-row"><span>Monthly mortgage</span><strong>{{ underwriting.metrics.monthly_mortgage|currency }}</strong></div>
+      <div class="fact-row"><span>Monthly cash flow</span><strong>{{ underwriting.metrics.monthly_cash_flow|currency }}</strong></div>
+      <div class="fact-row"><span>Annual NOI</span><strong>{{ underwriting.metrics.annual_noi|currency }}</strong></div>
+      <div class="fact-row"><span>Cap rate</span><strong>{{ underwriting.metrics.cap_rate|percent1 }}</strong></div>
+      <div class="fact-row"><span>Cash-on-cash</span><strong>{{ underwriting.metrics.cash_on_cash_return|percent1 }}</strong></div>
+      <div class="fact-row"><span>Rent / price</span><strong>{{ underwriting.metrics.rent_to_price_ratio|percent1 }}</strong></div>
+      <div class="fact-row"><span>Verdict</span><strong><span class="pill verdict-{{ underwriting.verdict.slug }}">{{ underwriting.verdict.label }}</span></strong></div>
+    </div>
+    {% if underwriting.warnings %}
+    <div class="warning-list detail-warning-list">
+      {% for warning in underwriting.warnings %}
+      <span class="pill status-running">{{ warning }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Assumptions Used</p>
+      <h2>Sources and defaults</h2>
+    </div>
+    <form method="post" action="{{ url_for('save_listing_rent_override', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}" class="detail-override-form">
+      <input type="hidden" name="redirect_target" value="listing_detail">
+      {% if return_to %}
+      <input type="hidden" name="return_to" value="{{ return_to }}">
+      {% endif %}
+      <label>
+        <span>Listing-specific monthly rent</span>
+        <input
+          type="number"
+          name="market_rent_monthly"
+          min="0"
+          step="50"
+          value="{{ '' if underwriting.metrics.gross_monthly_rent is none else underwriting.metrics.gross_monthly_rent|int }}"
+        >
+      </label>
+      <button type="submit" class="button-secondary">Save rent override</button>
+    </form>
+    <div class="facts-grid">
+      {% for key, assumption in underwriting.effective_assumptions.items() %}
+      <div class="fact-row fact-row-stacked">
+        <span>{{ assumption.label or key.replace('_', ' ')|title }}</span>
+        <strong>{{ assumption.value if assumption.value is not none else '—' }}</strong>
+        <div class="table-subline">
+          {{ assumption.source|replace('_', ' ')|title }} | {{ assumption.confidence|title }} confidence
+        </div>
+      </div>
+      {% endfor %}
     </div>
   </div>
 </section>

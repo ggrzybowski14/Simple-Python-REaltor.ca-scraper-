@@ -15,6 +15,15 @@ from urllib import error, parse, request
 
 from flask import Flask, abort, redirect, render_template, request as flask_request, url_for
 
+from ai_underwriting import build_rent_ai_payload, build_rent_ai_prompt_text, call_openai_rent_suggestions
+from investment import (
+    build_defaults_snapshot_from_form,
+    calculate_underwriting,
+    format_currency,
+    format_percent,
+    merge_investment_defaults,
+)
+from market_data import find_market_reference_match, hydrate_defaults_with_market_data
 from scraper import load_dotenv
 
 
@@ -28,6 +37,7 @@ PROPERTY_TYPE_OPTIONS = ["house", "apartment", "condo"]
 SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
 AI_BUY_BOX_CACHE: dict[str, dict[str, str]] = {}
+AI_RENT_PREVIEWS: dict[int, dict[str, Any]] = {}
 
 
 @dataclass
@@ -435,10 +445,109 @@ def serialize_buy_box_criteria(criteria: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_underwriting_rows(
+    active_listings: list[dict[str, Any]],
+    defaults_snapshot: dict[str, dict[str, Any]],
+    overrides_by_listing_id: dict[int, dict[str, Any]] | None = None,
+    buy_box_results_by_listing_id: dict[int, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for listing in active_listings:
+        listing_id = normalize_listing_id(listing.get("listing_id"))
+        listing_overrides = (overrides_by_listing_id or {}).get(listing_id or -1, {})
+        analysis = calculate_underwriting(listing, defaults_snapshot, listing_overrides=listing_overrides)
+        listing_buy_box = (buy_box_results_by_listing_id or {}).get(listing["listing_id"])
+        rows.append(
+            {
+                "listing": listing,
+                "metrics": analysis["metrics"],
+                "warnings": analysis["warnings"],
+                "verdict": analysis["verdict"],
+                "effective_assumptions": analysis["effective_assumptions"],
+                "buy_box": normalize_buy_box_bucket(listing_buy_box),
+                "overrides": listing_overrides,
+            }
+        )
+    bucket_rank = {"Likely": 0, "Maybe": 1, "Unlikely": 2, "All Listings": 3}
+    return sorted(
+        rows,
+        key=lambda row: (
+            bucket_rank.get((row.get("buy_box") or {}).get("label", "All Listings"), 9),
+            999999999 if row["metrics"].get("monthly_cash_flow") is None else -row["metrics"]["monthly_cash_flow"],
+            999999999 if row["metrics"].get("rent_to_price_ratio") is None else -row["metrics"]["rent_to_price_ratio"],
+            999999999 if row["metrics"].get("cap_rate") is None else -row["metrics"]["cap_rate"],
+            row["listing"].get("address") or "",
+        ),
+    )
+
+
+def hydrate_defaults_for_saved_search(
+    config: SupabaseReadConfig,
+    saved_search: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
+    base_defaults = fetch_saved_search_investment_defaults(config, int(saved_search["id"]))
+    market_rows = fetch_market_reference_rows(config)
+    market_match = find_market_reference_match(saved_search, market_rows)
+    hydrated_defaults = hydrate_defaults_with_market_data(base_defaults, market_match)
+    return hydrated_defaults, market_match
+
+
+def build_buy_box_result_lookup(
+    active_listings: list[dict[str, Any]],
+    buy_box: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
+    if not buy_box.get("applied"):
+        return {}
+    analysis = analyze_active_listings(active_listings, buy_box)
+    lookup: dict[int, dict[str, Any]] = {}
+    for bucket_name in ("matched", "maybe", "unmatched"):
+        label = bucket_name.title()
+        for listing in analysis[bucket_name]:
+            listing_id = normalize_listing_id(listing.get("listing_id"))
+            if listing_id is None:
+                continue
+            lookup[listing_id] = {
+                "bucket": bucket_name,
+                "label": label,
+                "reasons": listing.get("buy_box_reasons", []),
+                "ai_verdict": listing.get("ai_buy_box_verdict"),
+            }
+    return lookup
+
+
+def normalize_buy_box_bucket(listing_buy_box: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not listing_buy_box:
+        return None
+    ai_verdict = (listing_buy_box.get("ai_verdict") or "").strip().lower()
+    bucket = listing_buy_box.get("bucket")
+    normalized = dict(listing_buy_box)
+    if ai_verdict == "likely":
+        normalized["label"] = "Likely"
+    elif ai_verdict == "maybe":
+        normalized["label"] = "Maybe"
+    elif ai_verdict == "no":
+        normalized["label"] = "Unlikely"
+    elif bucket == "matched":
+        normalized["label"] = "Likely"
+    elif bucket == "maybe":
+        normalized["label"] = "Maybe"
+    else:
+        normalized["label"] = "Unlikely"
+    return normalized
+
+
 def create_app() -> Flask:
     load_dotenv()
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "local-real-estate-analyzer")
+
+    @app.template_filter("currency")
+    def currency_filter(value: float | None) -> str:
+        return format_currency(value)
+
+    @app.template_filter("percent1")
+    def percent_filter(value: float | None) -> str:
+        return format_percent(value, digits=1)
 
     @app.context_processor
     def inject_now() -> dict[str, Any]:
@@ -501,6 +610,208 @@ def create_app() -> Flask:
             current_query=flask_request.query_string.decode("utf-8"),
         )
 
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer")
+    def investment_analyzer(saved_search_id: int) -> str:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        defaults_snapshot, market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        overrides_by_listing_id = fetch_listing_investment_overrides(
+            config,
+            saved_search_id,
+            [listing["listing_id"] for listing in active_listings],
+        )
+        buy_box = build_buy_box_criteria({}, saved_search)
+        buy_box_results_by_listing_id = build_buy_box_result_lookup(active_listings, buy_box)
+        underwriting_rows = build_underwriting_rows(
+            active_listings,
+            defaults_snapshot,
+            overrides_by_listing_id=overrides_by_listing_id,
+            buy_box_results_by_listing_id=buy_box_results_by_listing_id,
+        )
+        return render_template(
+            "investment_analyzer.html",
+            saved_search=saved_search,
+            active_listings=active_listings,
+            underwriting_rows=underwriting_rows,
+            investment_defaults=defaults_snapshot,
+            buy_box=buy_box,
+            market_match=market_match,
+            default_rent_ai_prompt=build_rent_ai_prompt_text(),
+            ai_rent_preview=AI_RENT_PREVIEWS.get(saved_search_id),
+        )
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/defaults", methods=["POST"])
+    def save_investment_analyzer_defaults(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        defaults_snapshot = build_defaults_snapshot_from_form(flask_request.form, existing_defaults=existing_defaults)
+        persist_saved_search_investment_defaults(config, saved_search_id, defaults_snapshot)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, saved=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-manual-rent", methods=["POST"])
+    def use_manual_rent_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        manual_rent = parse_optional_int(flask_request.form.get("market_rent_monthly"))
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["market_rent_monthly"]["value"] = float(manual_rent) if manual_rent is not None else None
+        updated_defaults["market_rent_monthly"]["source"] = "manual"
+        updated_defaults["market_rent_monthly"]["confidence"] = "medium"
+        updated_defaults["market_rent_monthly"]["help_text"] = "Manual saved-search rent value."
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        clear_listing_rent_overrides_for_saved_search(config, saved_search_id)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, manual_rent_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-cmhc-rent", methods=["POST"])
+    def use_cmhc_rent_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        _hydrated_defaults, market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        if not market_match:
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_missing=1))
+        reference = market_match.get("market_reference") or {}
+        average_rent = reference.get("average_rent_monthly")
+        if average_rent is None:
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_missing=1))
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["market_rent_monthly"]["value"] = float(average_rent)
+        updated_defaults["market_rent_monthly"]["source"] = (
+            "cmhc_apartment_proxy" if market_match.get("property_type_mismatch") else f"cmhc_{market_match.get('match_type')}"
+        )
+        updated_defaults["market_rent_monthly"]["confidence"] = market_match.get("confidence", "medium")
+        updated_defaults["market_rent_monthly"]["help_text"] = market_match.get("notes") or updated_defaults["market_rent_monthly"]["help_text"]
+        updated_defaults["market_rent_monthly"]["help_url"] = reference.get("source_url")
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        clear_listing_rent_overrides_for_saved_search(config, saved_search_id)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-cmhc-vacancy", methods=["POST"])
+    def use_cmhc_vacancy_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        _hydrated_defaults, market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        if not market_match:
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_missing=1))
+        reference = market_match.get("market_reference") or {}
+        vacancy_rate = reference.get("vacancy_rate_percent")
+        if vacancy_rate is None:
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_missing=1))
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["vacancy_percent"]["value"] = float(vacancy_rate)
+        updated_defaults["vacancy_percent"]["source"] = f"cmhc_{market_match.get('match_type')}"
+        updated_defaults["vacancy_percent"]["confidence"] = market_match.get("confidence", "medium")
+        updated_defaults["vacancy_percent"]["help_text"] = market_match.get("notes") or updated_defaults["vacancy_percent"]["help_text"]
+        updated_defaults["vacancy_percent"]["help_url"] = reference.get("source_url")
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_vacancy_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/ai-rent-preview", methods=["POST"])
+    def preview_ai_rent_suggestions(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        investment_defaults, market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        prompt_text = (flask_request.form.get("prompt_text") or "").strip() or build_rent_ai_prompt_text()
+        payload = build_rent_ai_payload(saved_search, active_listings, market_match, investment_defaults)
+        try:
+            ai_result = call_openai_rent_suggestions(prompt_text, payload)
+            AI_RENT_PREVIEWS[saved_search_id] = {
+                "prompt_text": prompt_text,
+                "payload": payload,
+                "raw_response_text": ai_result["raw_response_text"],
+                "parsed_response": ai_result["parsed_response"],
+                "model": ai_result["model"],
+                "error": None,
+            }
+        except Exception as exc:
+            AI_RENT_PREVIEWS[saved_search_id] = {
+                "prompt_text": prompt_text,
+                "payload": payload,
+                "raw_response_text": "",
+                "parsed_response": {},
+                "model": None,
+                "error": str(exc),
+            }
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_preview=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/ai-rent-accept", methods=["POST"])
+    def accept_ai_rent_suggestion(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        listing_id = parse_optional_int(flask_request.form.get("listing_id"))
+        suggested_rent = parse_optional_int(flask_request.form.get("suggested_rent_monthly"))
+        if listing_id is None or suggested_rent is None:
+            abort(400, "Listing and suggested rent are required")
+        persist_listing_investment_override(
+            config,
+            saved_search_id,
+            listing_id,
+            {"market_rent_monthly": suggested_rent},
+        )
+        preview = AI_RENT_PREVIEWS.get(saved_search_id) or {}
+        suggestion_lookup = {
+            item.get("listing_id"): item
+            for item in (preview.get("parsed_response") or {}).get("suggestions", [])
+            if isinstance(item, dict)
+        }
+        parsed_suggestion = suggestion_lookup.get(listing_id, {})
+        persist_ai_underwriting_suggestion(
+            config,
+            saved_search_id=saved_search_id,
+            listing_id=listing_id,
+            suggestion_type="listing_rent",
+            status="accepted",
+            prompt_text=preview.get("prompt_text", build_rent_ai_prompt_text()),
+            model=preview.get("model"),
+            input_context=preview.get("payload", {}),
+            raw_response_text=preview.get("raw_response_text", ""),
+            parsed_suggestion=parsed_suggestion if isinstance(parsed_suggestion, dict) else {},
+            accepted_value=suggested_rent,
+        )
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_accepted=listing_id))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/listings/<int:listing_id>/rent", methods=["POST"])
+    def save_listing_rent_override(saved_search_id: int, listing_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        rent_override = flask_request.form.get("market_rent_monthly")
+        persist_listing_investment_override(
+            config,
+            saved_search_id,
+            listing_id,
+            {"market_rent_monthly": parse_optional_int(rent_override)},
+        )
+        redirect_target = (flask_request.form.get("redirect_target") or "").strip()
+        return_to = (flask_request.form.get("return_to") or "").strip()
+        if redirect_target == "listing_detail":
+            redirect_kwargs: dict[str, Any] = {
+                "saved_search_id": saved_search_id,
+                "listing_id": listing_id,
+                "rent_saved": 1,
+            }
+            if return_to:
+                redirect_kwargs["return_to"] = return_to
+            return redirect(url_for("listing_detail", **redirect_kwargs))
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, rent_saved=listing_id))
+
     @app.route("/saved-searches/<int:saved_search_id>/listings/<int:listing_id>")
     def listing_detail(saved_search_id: int, listing_id: int) -> str:
         config = get_supabase_read_config()
@@ -512,12 +823,19 @@ def create_app() -> Flask:
             abort(404)
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
         listing_buy_box = analyze_listing_for_detail(listing, buy_box)
+        investment_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        listing_overrides = fetch_listing_investment_overrides(config, saved_search_id, [listing_id]).get(listing_id, {})
+        underwriting = calculate_underwriting(listing, investment_defaults, listing_overrides=listing_overrides)
         return render_template(
             "listing_detail.html",
             saved_search=saved_search,
             listing=listing,
             buy_box=buy_box,
             listing_buy_box=listing_buy_box,
+            investment_defaults=investment_defaults,
+            underwriting=underwriting,
+            listing_overrides=listing_overrides,
+            return_to=flask_request.args.get("return_to"),
             back_query=flask_request.query_string.decode("utf-8"),
         )
 
@@ -628,6 +946,44 @@ def supabase_patch(
         raise RuntimeError(f"Supabase write failed: {exc.reason}") from exc
 
 
+def supabase_post(
+    config: SupabaseReadConfig,
+    path: str,
+    *,
+    query: dict[str, Any] | None = None,
+    payload: Any,
+    prefer: str | None = None,
+) -> Any:
+    endpoint = f"{config.url}/rest/v1/{path}"
+    if query:
+        endpoint = f"{endpoint}?{parse.urlencode(query, doseq=True)}"
+
+    headers = {
+        "apikey": config.key,
+        "Authorization": f"Bearer {config.key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+
+    req = request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw) if raw else None
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Supabase write failed with status {exc.code}: {details}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Supabase write failed: {exc.reason}") from exc
+
+
 def fetch_saved_searches(config: SupabaseReadConfig) -> list[dict[str, Any]]:
     result = supabase_get(
         config,
@@ -692,6 +1048,195 @@ def fetch_active_listings(config: SupabaseReadConfig, saved_search_id: int) -> l
     listings = result if isinstance(result, list) else []
     merge_listing_media(config, listings)
     return listings
+
+
+def fetch_saved_search_investment_defaults(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+) -> dict[str, dict[str, Any]]:
+    try:
+        result = supabase_get(
+            config,
+            "saved_search_investment_defaults",
+            query={
+                "saved_search_id": f"eq.{saved_search_id}",
+                "select": "defaults_snapshot",
+                "limit": 1,
+            },
+        )
+    except RuntimeError:
+        return merge_investment_defaults(None)
+    if isinstance(result, list) and result:
+        defaults_snapshot = result[0].get("defaults_snapshot")
+        return merge_investment_defaults(defaults_snapshot if isinstance(defaults_snapshot, dict) else None)
+    return merge_investment_defaults(None)
+
+
+def fetch_market_reference_rows(config: SupabaseReadConfig) -> list[dict[str, Any]]:
+    try:
+        result = supabase_get(
+            config,
+            "market_reference_data",
+            query={
+                "select": (
+                    "id,source,source_dataset,market_name,province,market_key,geography_type,"
+                    "property_type,bedroom_count,average_rent_monthly,vacancy_rate_percent,source_url,source_date"
+                ),
+                "limit": 500,
+            },
+        )
+    except RuntimeError:
+        return []
+    return result if isinstance(result, list) else []
+
+
+def persist_saved_search_investment_defaults(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+    defaults_snapshot: dict[str, dict[str, Any]],
+) -> None:
+    supabase_post(
+        config,
+        "saved_search_investment_defaults",
+        query={"on_conflict": "saved_search_id"},
+        payload=[
+            {
+                "saved_search_id": saved_search_id,
+                "defaults_snapshot": defaults_snapshot,
+            }
+        ],
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+
+
+def fetch_listing_investment_overrides(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+    listing_ids: list[int],
+) -> dict[int, dict[str, Any]]:
+    normalized_ids = sorted({listing_id for listing_id in listing_ids if isinstance(listing_id, int)})
+    if not normalized_ids:
+        return {}
+    try:
+        result = supabase_get(
+            config,
+            "listing_investment_overrides",
+            query={
+                "saved_search_id": f"eq.{saved_search_id}",
+                "listing_id": f"in.({','.join(str(listing_id) for listing_id in normalized_ids)})",
+                "select": "listing_id,overrides_snapshot",
+            },
+        )
+    except RuntimeError:
+        return {}
+    rows = result if isinstance(result, list) else []
+    overrides_by_listing_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        listing_id = row.get("listing_id")
+        snapshot = row.get("overrides_snapshot")
+        if isinstance(listing_id, int) and isinstance(snapshot, dict):
+            overrides_by_listing_id[listing_id] = snapshot
+    return overrides_by_listing_id
+
+
+def persist_listing_investment_override(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+    listing_id: int,
+    override_updates: dict[str, Any],
+) -> None:
+    current_snapshot = fetch_listing_investment_overrides(config, saved_search_id, [listing_id]).get(listing_id, {})
+    normalized_snapshot = dict(current_snapshot) if isinstance(current_snapshot, dict) else {}
+    for key, value in override_updates.items():
+        if value is None:
+            normalized_snapshot.pop(key, None)
+        else:
+            normalized_snapshot[key] = value
+    supabase_post(
+        config,
+        "listing_investment_overrides",
+        query={"on_conflict": "saved_search_id,listing_id"},
+        payload=[
+            {
+                "saved_search_id": saved_search_id,
+                "listing_id": listing_id,
+                "overrides_snapshot": normalized_snapshot,
+            }
+        ],
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+
+
+def clear_listing_rent_overrides_for_saved_search(
+    config: SupabaseReadConfig,
+    saved_search_id: int,
+) -> None:
+    try:
+        result = supabase_get(
+            config,
+            "listing_investment_overrides",
+            query={
+                "saved_search_id": f"eq.{saved_search_id}",
+                "select": "id,listing_id,overrides_snapshot",
+            },
+        )
+    except RuntimeError:
+        return
+    rows = result if isinstance(result, list) else []
+    for row in rows:
+        listing_id = row.get("listing_id")
+        snapshot = row.get("overrides_snapshot")
+        if not isinstance(listing_id, int) or not isinstance(snapshot, dict):
+            continue
+        if "market_rent_monthly" not in snapshot:
+            continue
+        updated_snapshot = dict(snapshot)
+        updated_snapshot.pop("market_rent_monthly", None)
+        supabase_patch(
+            config,
+            "listing_investment_overrides",
+            query={"saved_search_id": f"eq.{saved_search_id}", "listing_id": f"eq.{listing_id}"},
+            payload={"overrides_snapshot": updated_snapshot},
+        )
+
+
+def persist_ai_underwriting_suggestion(
+    config: SupabaseReadConfig,
+    *,
+    saved_search_id: int,
+    listing_id: int | None,
+    suggestion_type: str,
+    status: str,
+    prompt_text: str,
+    model: str | None,
+    input_context: dict[str, Any],
+    raw_response_text: str,
+    parsed_suggestion: dict[str, Any],
+    accepted_value: int | None = None,
+) -> None:
+    try:
+        supabase_post(
+            config,
+            "ai_underwriting_suggestions",
+            payload=[
+                {
+                    "saved_search_id": saved_search_id,
+                    "listing_id": listing_id,
+                    "suggestion_type": suggestion_type,
+                    "status": status,
+                    "prompt_text": prompt_text,
+                    "model": model,
+                    "input_context": input_context,
+                    "raw_response_text": raw_response_text,
+                    "parsed_suggestion": parsed_suggestion,
+                    "accepted_value": accepted_value,
+                    "accepted_at": datetime.utcnow().isoformat(timespec="seconds") + "Z" if accepted_value is not None else None,
+                }
+            ],
+            prefer="return=minimal",
+        )
+    except RuntimeError:
+        return
 
 
 def count_sparse_listings(listings: list[dict[str, Any]]) -> int:

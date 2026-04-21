@@ -150,6 +150,9 @@
       <p class="eyebrow">Buy Box Results</p>
       <h2>{% if buy_box.applied %}Passed and failed{% else %}Run the buy box{% endif %}</h2>
     </div>
+    <div class="card-actions section-actions">
+      <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Underwrite Listings</a>
+    </div>
     {% if buy_box.applied %}
     <div class="buy-box-ai-summary">
       <p class="eyebrow">Current Buy Box</p>
