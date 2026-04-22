@@ -77,7 +77,7 @@
       <h2>Tracked searches</h2>
     </div>
     {% if saved_searches %}
-    <div class="card-list">
+    <div class="card-list dashboard-search-list">
       {% for search in saved_searches %}
       <article class="info-card">
         <div class="card-topline">
@@ -105,6 +105,7 @@
         </p>
         <div class="card-actions">
           <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">Open search</a>
+          <a class="internal-link" href="{{ url_for('market_context_by_key', market_key=search.market_profile.market_key) }}">Market context</a>
           <form method="post" action="{{ url_for('update_saved_search', saved_search_id=search.id) }}" class="inline-form">
             <button type="submit" class="button-secondary">Update Search</button>
           </form>
@@ -154,24 +155,24 @@
 
   <div class="panel">
     <div class="panel-header">
-      <p class="eyebrow">Local Jobs</p>
-      <h2>Scrapes launched from this website session</h2>
+      <p class="eyebrow">Markets</p>
+      <h2>Markets analyzed</h2>
     </div>
-    {% if jobs %}
+    {% if analyzed_markets %}
     <div class="card-list compact">
-      {% for job in jobs %}
-      <a class="info-card clickable" href="{{ url_for('job_detail', job_id=job.id) }}">
+      {% for market in analyzed_markets %}
+      <a class="info-card clickable" href="{{ url_for('market_context_by_key', market_key=market.market_key) }}">
         <div class="card-topline">
-          <h3>{{ job.id }}</h3>
-          <span class="pill status-{{ job.status }}">{{ job.status }}</span>
+          <h3>{{ market.market_name }}</h3>
+          <span class="pill">{{ market.province or '—' }}</span>
         </div>
-        <p class="meta-line">Started: {{ job.started_at }}</p>
-        <p class="meta-line">Command: {{ job.args|join(' ') }}</p>
+        <p class="meta-line">Market key: {{ market.market_key }}</p>
+        <p class="meta-line">{{ market.saved_searches|length }} linked saved search{{ '' if market.saved_searches|length == 1 else 'es' }}</p>
       </a>
       {% endfor %}
     </div>
     {% else %}
-    <p class="empty-state">No local scrape jobs launched from the website yet.</p>
+    <p class="empty-state">No market context pages are available yet.</p>
     {% endif %}
   </div>
 </section>

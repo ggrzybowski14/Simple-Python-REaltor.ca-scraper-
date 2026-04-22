@@ -4,9 +4,9 @@ This repository started as a small proof of concept built to answer one question
 
 Can a visible Python Playwright browser with stealth and light human-like behavior accept search inputs, drive Realtor.ca's filters, and scrape matching listing data?
 
-That proof of concept now serves as the foundation for a local real-estate analyzer application.
+That proof of concept now serves as the foundation for a local-first real-estate analyzer prototype.
 
-Current state:
+Current prototype state:
 
 - Scraper foundation working: neutral startup plus input-driven browser search
 - Broader collection working: summary collection across pages plus conservative detail enrichment
@@ -14,23 +14,27 @@ Current state:
 - Phase 1 Supabase model working: saved searches, scrape runs, canonical listings, and run history
 - Light lifecycle handling implemented: active listings per saved search plus `is_new_in_run`
 - Remaining Phase 1 follow-up: prove the inactive-listing transition with a controlled rerun
-- Local website working: dashboard, saved search detail view, listing detail, photo gallery, and background scrape launch
+- Local website prototype in place: dashboard, saved search detail view, listing detail, photo gallery, and background scrape launch
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
 - Buy-box persistence working: one saved buy box per saved search, shown on both saved-search and listing-detail pages
-- Investment analyzer working: dedicated underwriting page for all active listings in a saved search
+- Investment analyzer prototype in place: dedicated underwriting page for all active listings in a saved search
 - Underwriting persistence working: saved-search defaults plus listing-level rent overrides
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
+- Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
+- First structured market layer working: `population`, `population growth`, `unemployment`, and `median household income` can now be stored per market and rendered on the website
+- First appreciation layer working: Victoria can now show a seeded Statistics Canada RPPI appreciation series, while markets without a matched official series fall back to an explicit empty state
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
 - Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
 - Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
-- Automated tests working: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
+- Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
-- Next active step: tighten the underwriting UI so source modes and per-listing smart overrides are easier to read, then decide whether vacancy needs an AI mode at all
+- Current active step: start expanding the market context layer, especially appreciation coverage and the next market-level data sources
+- Current UI priority: keep improving clarity in the underwriting workflow rather than broadening the scraper again immediately
 
 ## What It Does Today
 
@@ -61,6 +65,10 @@ Current state:
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
 - Supports separate smart maintenance and smart CapEx per-listing override passes for active listings
 - Includes a local pytest suite for the deterministic underwriting and app logic
+- Supports dedicated market context pages backed by:
+  - CMHC rent and vacancy where available
+  - seeded structured market metrics
+  - seeded appreciation history where an official series exists
 
 ## What It Is Not Yet
 
@@ -68,11 +76,11 @@ This is not yet:
 
 - a finished listing-analysis product
 - a polished final investment analyzer
-- a market fundamentals analyzer
+- a finished market fundamentals analyzer
 - a multi-user application
 - a deployed production website
 
-The repository is currently a working local-first scraper, ingestion layer, and early listing-analysis tool.
+The repository is currently a usable local-first scraper, ingestion layer, and early listing-analysis prototype.
 
 ## Setup
 
@@ -122,6 +130,27 @@ python3 scripts/import_cmhc_market_data.py \
 
 Then open `http://127.0.0.1:5000` unless you are using a different local port during development.
 
+Important local note:
+
+- On this machine, `5000` has occasionally conflicted with other local services in Chrome, so recent development runs have used `http://127.0.0.1:8002`.
+
+## Environment
+
+Copy `.env.example` to `.env.local` and fill in the values needed for your local workflow.
+
+Current config surface:
+
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- `OPENAI_API_KEY` for AI buy-box analysis and AI rent suggestions
+- `OPENAI_BUY_BOX_MODEL` optional override for buy-box AI analysis
+- `OPENAI_UNDERWRITING_MODEL` optional override for rent suggestion analysis
+
+Important notes:
+
+- Supabase is required for the persistent saved-search, scrape-history, and listing-analysis workflow.
+- OpenAI configuration is optional. Without it, the core scraper, Supabase flow, and non-AI underwriting still work, but AI buy-box and AI rent features are unavailable.
+
 ## Supabase
 
 Supabase writes are currently integrated into the same `scraper.py` script.
@@ -132,6 +161,7 @@ Setup:
 2. Copy `.env.example` to `.env.local` and fill in:
    - `SUPABASE_URL`
    - `SUPABASE_KEY`
+   - optionally `OPENAI_API_KEY` if you want AI buy-box analysis and AI rent suggestions
 3. Run the scraper normally. If credentials are present, Supabase upload happens automatically.
 
 Example:
@@ -152,8 +182,11 @@ Notes:
 
 - The script still saves local JSON output even when Supabase writes are enabled.
 - If you want to disable database writes for a specific run, use `--no-supabase`.
-- The Supabase schema now stores saved searches, scrape runs, canonical listings, run-to-listing history, saved-search lifecycle state, underwriting defaults, listing overrides, CMHC market reference rows, and AI suggestion history separately.
+- The Supabase schema now stores saved searches, scrape runs, canonical listings, run-to-listing history, saved-search lifecycle state, underwriting defaults, listing overrides, CMHC market reference rows, AI suggestion history, and first-pass market context tables separately.
 - CMHC import currently parses the BC rental-market workbook and loads apartment-based market rent and vacancy rows into `market_reference_data`.
+- First-pass market context seeding now uses:
+  - [supabase/market_context_seed.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/market_context_seed.sql:1)
+  - [scripts/seed_market_context.py](/Users/georgia/Projects/simple realtor.ca scraper python/scripts/seed_market_context.py:1)
 
 ## Current Integrated Flow
 
@@ -175,13 +208,15 @@ What is already working in the integrated flow:
 - the scraper now maintains a saved-search-specific active-listing view via `current_active_saved_search_listings`
 - the scraper now has a targeted sparse-detail retry script for repairing missing detail fields
 
-Example validated outcome:
+Example historical validated outcome:
 
 - a Victoria search with `2+` beds, `house`, and `max price 1000000`
-- produced `58` visible matching listings on Realtor.ca for that search state in the latest validated run
+- produced `58` visible matching listings on Realtor.ca for that search state in one validated run
 - successfully collected `12` summaries in a broader validation pass
 - successfully enriched `4` detail pages with the cleaned Phase 3 schema
 - successfully upserted validated listing data into Supabase in live testing
+
+This block is included as an example of a successful validation pass, not as a claim about current live market counts.
 
 Current enriched fields include:
 
@@ -217,8 +252,9 @@ Current website scope:
 - visual indicator for the saved search updated by the latest run
 - local form to launch a new headed scrape in the background
 - local action to retry only sparse listing details
-- local job detail page with basic log output
 - listing detail page with photo gallery and richer scraped fields
+- direct market context links from the dashboard
+- dashboard `Markets analyzed` panel listing unique markets rather than only saved searches
 - buy-box workspace with:
   - all scraped listings
   - structured filters
@@ -236,6 +272,11 @@ Current website scope:
   - BC-wide rule-based utilities and insurance defaults
   - separate `Apply smart maintenance` and `Apply smart CapEx` actions that write listing-level reserve overrides
   - listing-level rent overrides
+- market context page with:
+  - CMHC-backed housing fundamentals
+  - structured market metrics for Duncan and Victoria
+  - a direct market route like `/markets/victoria_bc`
+  - an appreciation section that shows a real chart when a series exists and an explicit `Series pending` state when it does not
 - listing-detail underwriting section with:
   - monthly cash flow
   - cap rate
@@ -254,7 +295,7 @@ Current website limitations:
 - no dedicated run comparison or retry UX yet
 - no explicit “why this listing was reused vs re-scraped” UI yet
 - site result counts can still fluctuate while Realtor.ca settles
-- vacancy-side AI flow is not built yet
+- `Vacancy %` is intentionally not AI-driven right now; it should come from market stats such as CMHC when available and remain user-editable
 - underwriting source-mode UI still needs another polish pass so smart overrides and active modes are more obvious
 - CMHC rent data is currently apartment-oriented, so house searches can still require manual or AI adjustment
 - utilities and insurance rule-based estimates are BC-wide heuristics, not market-specific estimates
@@ -275,7 +316,7 @@ The intended product direction is:
 Important scope clarifications:
 
 - `saved search` and `buy box` are related but separate concepts
-- the current near-term goal is listing ingestion and listing analysis within a selected market
+- the current near-term goal is to finish a clearer first full prototype of the listing-analysis workflow within a selected market
 - broader market fundamentals analysis is a later product area, but the roadmap now explicitly leaves room for a future market analyzer
 
 ## Investment Analyzer Direction
@@ -308,10 +349,11 @@ Planning guidance:
 - long-term metrics like appreciation, IRR, and equity multiple should be phase 2+ work after the base underwriting engine is stable
 - future market context should support items like rent growth, appreciation, population growth, job growth, household income, supply, and liquidity
 
-AI-assisted estimation is planned for a later phase to help thin-data markets. The intended rule is:
+AI-assisted estimation is already part of the product for selective cases, but not every assumption should become AI-driven. The intended rule is:
 
 - use structured or public data first when available
-- use AI as a fallback or synthesis layer when local market data is sparse
+- use AI as a fallback or synthesis layer where it adds real value, such as fuzzy buy-box interpretation or rent estimation
+- keep `Vacancy %` sourced from market stats plus manual user input for now rather than adding an AI vacancy mode
 - always show source and confidence
 - always allow the user to edit the estimate
 
@@ -321,11 +363,10 @@ The current working roadmap is:
 
 1. stabilize scrape result counts and pagination reliability
 2. continue improving listing-review workflow in the local app
-3. add a listing-level investment assumptions model
-4. add a buy-and-hold underwriting engine and listing-detail investment UI
-5. add smarter market-derived defaults and AI-assisted estimates
-6. add a future market analyzer with market tiles generated from scraped regions
-7. later add long-term projections, IRR, equity multiple, and other strategy overlays
+3. improve the clarity of the existing investment-assumptions and underwriting UI
+4. keep refining market-derived defaults and selective AI-assisted estimates
+5. add a future market analyzer with market tiles generated from scraped regions
+6. later add long-term projections, IRR, equity multiple, and other strategy overlays
 
 See [PROJECT_OVERVIEW.md](/Users/georgia/Projects/simple realtor.ca scraper python/PROJECT_OVERVIEW.md:1) for the detailed product spec and next-session handoff notes.
 See [PRODUCT_INSPIRATION.md](/Users/georgia/Projects/simple realtor.ca scraper python/PRODUCT_INSPIRATION.md:1) for external product references, screenshot-derived UI patterns, and future design ideas that should persist across sessions.
@@ -335,11 +376,11 @@ See [PRODUCT_INSPIRATION.md](/Users/georgia/Projects/simple realtor.ca scraper p
 Highest-value next work from the current state:
 
 1. tighten the investment-analyzer UI so active source modes and listing-level smart overrides are obvious without opening every listing
-2. decide whether `vacancy %` truly needs an AI mode or should remain `manual` plus `CMHC` only
-3. make settled site counts more reliable by improving post-filter stabilization and logging first-page URLs more clearly
-4. keep hardening pagination so `results_count` and `summary_count` stay aligned across repeated runs
-5. add workflow states such as shortlist / ignore / notes for reviewed listings
-6. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
+2. keep `Vacancy %` as `manual` plus market-stats-backed input, and make that source choice clearer in the UI
+3. improve the saved-search and listing-detail UI so incomplete data, missing details, and next actions are easier to interpret
+4. add workflow states such as shortlist / ignore / notes for reviewed listings
+5. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
+6. continue scraper hardening only where it directly supports the prototype workflow
 
 ## Next Active Work
 
@@ -357,9 +398,9 @@ What is now done:
 Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
-- keep improving scrape stability until the active listing set is dependable enough for underwriting
 - polish the underwriting assumption UX, especially the visibility of per-listing smart overrides versus shared defaults
-- decide whether to keep vacancy source modes to `manual` plus `CMHC` or add a later AI-assisted path
+- improve the saved-search and listing-detail UI so missing detail fields and incomplete underwriting inputs are clearer
+- keep vacancy source modes tied to market stats plus manual editing rather than adding an AI vacancy path
 - add simple listing workflow actions such as shortlist / ignore / notes
 
 Planned direction after that:
@@ -381,3 +422,78 @@ If scraping fails, it writes artifacts into `artifacts/`:
 - the current page HTML
 
 This is meant to make selector issues and anti-bot issues easier to diagnose without adding unnecessary framework code.
+## Market Context Status
+
+The first market-context layer is now real in the codebase.
+
+What is working now:
+
+- market pages can be opened from the dashboard
+- market pages can also be opened directly by market key:
+  - `/markets/victoria_bc`
+  - `/markets/duncan_bc`
+- the current page shape includes:
+  - market header and linked saved searches
+  - housing fundamentals
+  - appreciation
+  - demographics and labour
+- Duncan and Victoria now have seeded structured market metrics:
+  - `population`
+  - `population growth`
+  - `unemployment rate`
+  - `median household income`
+- Victoria now has a seeded Statistics Canada RPPI appreciation series in `market_metric_series`
+- Duncan intentionally does not yet have a matched appreciation series, so the page shows a clean empty state instead of proxying bad data
+
+What is intentionally not finished yet:
+
+- no rent-growth series yet
+- no appreciation series beyond the current Victoria seed
+- no AI-enriched market narrative yet
+- no broader national market ingestion workflow yet
+- no direct long-term return modeling wired from market context into listing pages yet
+
+Current source choices:
+
+- CMHC for rent and vacancy
+- Statistics Canada 2021 Census for population, growth, unemployment, and household income
+- Statistics Canada RPPI for Victoria appreciation history
+- explicit empty-state handling for markets with no matched official appreciation series
+
+## Fresh Agent Handoff
+
+If a new agent picks this up later, the most important current truths are:
+
+- this is a local-first Flask plus Supabase prototype, not a deployed website
+- the listing-analysis loop is real and usable now
+- the underwriting UI has been improved substantially, but should still be tightened further before large new feature areas are added
+- the market-context layer has started and is now a real part of the website
+- Victoria is the first market with a live appreciation chart
+- Duncan has market stats but no appreciation series yet
+- future smaller-market appreciation support will likely need a different source path than Victoria
+
+## Next Steps
+
+The next practical product and engineering steps are:
+
+1. improve the presentation of the appreciation block:
+   - friendlier quarter labels
+   - stronger chart polish
+   - slightly clearer source/context copy
+2. decide the next appreciation-source path for non-StatCan markets such as Duncan
+3. add the next market-context fields selectively rather than all at once:
+   - likely `rent growth`
+   - then selective market narrative / economic-driver fields
+4. keep improving underwriting workflow clarity in parallel:
+   - source-mode readability
+   - shortlist / ignore / notes style review workflow
+5. only after that, revisit wiring market context into longer-term return projections
+
+## Push State
+
+At the end of this session, the expected repo state for handoff is:
+
+- docs updated to reflect current website and market-context functionality
+- dashboard updated to link directly into market pages
+- Duncan and Victoria seeded as first analyzed markets
+- Victoria appreciation series seeded from Statistics Canada

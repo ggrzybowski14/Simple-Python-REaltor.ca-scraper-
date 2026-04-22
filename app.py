@@ -26,7 +26,12 @@ from investment import (
     format_percent,
     merge_investment_defaults,
 )
-from market_data import find_market_reference_match, hydrate_defaults_with_market_data
+from market_data import (
+    find_market_reference_match,
+    hydrate_defaults_with_market_data,
+    infer_province,
+    normalize_market_key,
+)
 from scraper import load_dotenv
 
 
@@ -41,6 +46,13 @@ SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
 AI_BUY_BOX_CACHE: dict[str, dict[str, str]] = {}
 AI_RENT_PREVIEWS: dict[int, dict[str, Any]] = {}
+
+MARKET_METRIC_DEFINITIONS = {
+    "population": {"label": "Population", "format": "integer"},
+    "population_growth_percent": {"label": "Population Growth", "format": "percent1"},
+    "unemployment_rate_percent": {"label": "Unemployment Rate", "format": "percent1"},
+    "median_household_income": {"label": "Median Household Income", "format": "currency0"},
+}
 
 
 @dataclass
@@ -91,6 +103,60 @@ def normalize_keyword_list(value: str | None) -> list[str]:
         return []
     raw_parts = [part.strip().lower() for part in value.replace("\n", ",").split(",")]
     return [part for part in raw_parts if part]
+
+
+def humanize_market_name(value: str | None) -> str:
+    return (value or "Unknown market").strip()
+
+
+def derive_market_profile_from_saved_search(saved_search: dict[str, Any]) -> dict[str, Any]:
+    location = humanize_market_name(saved_search.get("location"))
+    province = infer_province(saved_search)
+    return {
+        "market_key": normalize_market_key(location, province),
+        "market_name": location,
+        "province": province,
+        "geography_type": "market",
+        "status": "placeholder",
+        "notes": None,
+    }
+
+
+def build_market_index(
+    config: SupabaseReadConfig,
+    saved_searches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    markets_by_key: dict[str, dict[str, Any]] = {}
+    for search in saved_searches:
+        derived_profile = derive_market_profile_from_saved_search(search)
+        market_key = derived_profile["market_key"]
+        market = markets_by_key.get(market_key)
+        if market is None:
+            persisted_profile = fetch_market_profile(config, market_key)
+            market = persisted_profile or derived_profile
+            market = {
+                **market,
+                "saved_searches": [],
+                "representative_saved_search_id": search["id"],
+            }
+            markets_by_key[market_key] = market
+        market["saved_searches"].append(search)
+    return sorted(markets_by_key.values(), key=lambda market: market["market_name"].lower())
+
+
+def format_market_metric_value(metric: dict[str, Any]) -> str:
+    value = metric.get("value_numeric")
+    format_name = metric.get("format")
+    if value is None:
+        return metric.get("value_text") or "—"
+    numeric_value = float(value)
+    if format_name == "currency0":
+        return format_currency(numeric_value)
+    if format_name == "percent1":
+        return format_percent(numeric_value, digits=1)
+    if format_name == "integer":
+        return f"{int(round(numeric_value)):,}"
+    return str(value)
 
 
 def get_saved_buy_box_settings(saved_search: dict[str, Any]) -> dict[str, Any]:
@@ -570,13 +636,43 @@ def create_app() -> Flask:
             search["updated_in_latest_run"] = bool(
                 latest_run and latest_run.get("saved_search_id") == search["id"]
             )
-        job_snapshots = list_scrape_jobs()
+            search["market_profile"] = derive_market_profile_from_saved_search(search)
+        analyzed_markets = build_market_index(config, saved_searches)
         return render_template(
             "dashboard.html",
             saved_searches=saved_searches,
             recent_runs=recent_runs,
-            jobs=job_snapshots,
+            analyzed_markets=analyzed_markets,
             property_type_options=PROPERTY_TYPE_OPTIONS,
+        )
+
+    @app.route("/markets/<market_key>")
+    def market_context_by_key(market_key: str) -> str:
+        config = get_supabase_read_config()
+        saved_searches = fetch_saved_searches(config)
+        matching_saved_searches = [
+            search for search in saved_searches
+            if derive_market_profile_from_saved_search(search)["market_key"] == market_key
+        ]
+        market_profile = fetch_market_profile(config, market_key)
+        if market_profile is None and not matching_saved_searches:
+            abort(404)
+        if market_profile is None and matching_saved_searches:
+            market_profile = derive_market_profile_from_saved_search(matching_saved_searches[0])
+        representative_saved_search = matching_saved_searches[0] if matching_saved_searches else None
+        market_metrics = fetch_market_metrics(config, market_profile["market_key"])
+        housing_summary = build_market_housing_summary(config, market_profile)
+        appreciation_chart = build_appreciation_chart(
+            fetch_market_metric_series(config, market_profile["market_key"], series_key="residential_property_price_index_total")
+        )
+        return render_template(
+            "market_context.html",
+            saved_search=representative_saved_search,
+            market_profile=market_profile,
+            housing_summary=housing_summary,
+            market_metric_cards=build_market_metric_cards(market_metrics),
+            appreciation_chart=appreciation_chart,
+            related_saved_searches=matching_saved_searches,
         )
 
     @app.route("/saved-searches/<int:saved_search_id>")
@@ -585,6 +681,7 @@ def create_app() -> Flask:
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
+        saved_search["market_profile"] = derive_market_profile_from_saved_search(saved_search)
         if flask_request.args.get("clear_buy_box"):
             clear_saved_buy_box(config, saved_search)
             return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
@@ -611,6 +708,34 @@ def create_app() -> Flask:
             sparse_listing_count=count_sparse_listings(active_listings),
             property_type_options=PROPERTY_TYPE_OPTIONS,
             current_query=flask_request.query_string.decode("utf-8"),
+        )
+
+    @app.route("/saved-searches/<int:saved_search_id>/market-context")
+    def market_context(saved_search_id: int) -> str:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        derived_profile = derive_market_profile_from_saved_search(saved_search)
+        market_profile = fetch_market_profile(config, derived_profile["market_key"]) or derived_profile
+        market_metrics = fetch_market_metrics(config, market_profile["market_key"])
+        housing_summary = build_market_housing_summary(config, market_profile)
+        appreciation_chart = build_appreciation_chart(
+            fetch_market_metric_series(config, market_profile["market_key"], series_key="residential_property_price_index_total")
+        )
+        related_saved_searches = [
+            search
+            for search in fetch_saved_searches(config)
+            if derive_market_profile_from_saved_search(search)["market_key"] == market_profile["market_key"]
+        ]
+        return render_template(
+            "market_context.html",
+            saved_search=saved_search,
+            market_profile=market_profile,
+            housing_summary=housing_summary,
+            market_metric_cards=build_market_metric_cards(market_metrics),
+            appreciation_chart=appreciation_chart,
+            related_saved_searches=related_saved_searches,
         )
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer")
@@ -642,6 +767,8 @@ def create_app() -> Flask:
             overrides_by_listing_id=overrides_by_listing_id,
             buy_box_results_by_listing_id=buy_box_results_by_listing_id,
         )
+        utilities_rule_based_estimate = estimate_rule_based_utilities_monthly(saved_search)
+        insurance_rule_based_estimate = estimate_rule_based_insurance_monthly(saved_search)
         return render_template(
             "investment_analyzer.html",
             saved_search=saved_search,
@@ -654,6 +781,8 @@ def create_app() -> Flask:
             ai_rent_preview=AI_RENT_PREVIEWS.get(saved_search_id),
             smart_maintenance_active=smart_maintenance_active,
             smart_capex_active=smart_capex_active,
+            utilities_rule_based_estimate=utilities_rule_based_estimate,
+            insurance_rule_based_estimate=insurance_rule_based_estimate,
             ai_preview_listing_lookup={
                 normalize_listing_id(listing.get("listing_id")): listing
                 for listing in active_listings
@@ -1349,6 +1478,219 @@ def fetch_market_reference_rows(config: SupabaseReadConfig) -> list[dict[str, An
     except RuntimeError:
         return []
     return result if isinstance(result, list) else []
+
+
+def fetch_market_profile(config: SupabaseReadConfig, market_key: str) -> dict[str, Any] | None:
+    try:
+        result = supabase_get(
+            config,
+            "market_profiles",
+            query={
+                "market_key": f"eq.{market_key}",
+                "select": "id,market_key,market_name,province,geography_type,status,notes",
+                "limit": 1,
+            },
+        )
+    except RuntimeError:
+        return None
+    rows = result if isinstance(result, list) else []
+    return rows[0] if rows else None
+
+
+def fetch_market_metrics(config: SupabaseReadConfig, market_key: str) -> list[dict[str, Any]]:
+    try:
+        result = supabase_get(
+            config,
+            "market_metrics",
+            query={
+                "market_key": f"eq.{market_key}",
+                "select": (
+                    "metric_key,value_numeric,value_text,unit,source_name,source_url,"
+                    "source_date,confidence,notes"
+                ),
+                "order": "metric_key.asc",
+            },
+        )
+    except RuntimeError:
+        return []
+    return result if isinstance(result, list) else []
+
+
+def build_market_metric_cards(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for metric_key in ("population", "population_growth_percent", "unemployment_rate_percent", "median_household_income"):
+        definition = MARKET_METRIC_DEFINITIONS[metric_key]
+        raw_metric = next((metric for metric in metrics if metric.get("metric_key") == metric_key), None)
+        if raw_metric is None:
+            cards.append(
+                {
+                    "key": metric_key,
+                    "label": definition["label"],
+                    "display_value": "—",
+                    "source_name": None,
+                    "source_url": None,
+                    "source_date": None,
+                    "confidence": None,
+                    "notes": None,
+                }
+            )
+            continue
+        enriched_metric = {
+            **raw_metric,
+            "format": definition["format"],
+        }
+        cards.append(
+            {
+                "key": metric_key,
+                "label": definition["label"],
+                "display_value": format_market_metric_value(enriched_metric),
+                "source_name": raw_metric.get("source_name"),
+                "source_url": raw_metric.get("source_url"),
+                "source_date": raw_metric.get("source_date"),
+                "confidence": raw_metric.get("confidence"),
+                "notes": raw_metric.get("notes"),
+            }
+        )
+    return cards
+
+
+def fetch_market_metric_series(
+    config: SupabaseReadConfig,
+    market_key: str,
+    *,
+    series_key: str,
+) -> list[dict[str, Any]]:
+    try:
+        result = supabase_get(
+            config,
+            "market_metric_series",
+            query={
+                "market_key": f"eq.{market_key}",
+                "series_key": f"eq.{series_key}",
+                "select": (
+                    "point_date,value_numeric,unit,source_name,source_url,"
+                    "source_date,confidence,notes"
+                ),
+                "order": "point_date.asc",
+            },
+        )
+    except RuntimeError:
+        return []
+    return result if isinstance(result, list) else []
+
+
+def build_appreciation_chart(series_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(series_rows) < 2:
+        return {
+            "available": False,
+            "title": "Appreciation history",
+            "empty_message": "No official appreciation series is available for this market yet.",
+            "notes": "Victoria can use Statistics Canada RPPI data. Smaller markets may need a separate source later.",
+            "chart_path": "",
+            "series_points": [],
+        }
+
+    values = [float(row["value_numeric"]) for row in series_rows if row.get("value_numeric") is not None]
+    if len(values) < 2:
+        return {
+            "available": False,
+            "title": "Appreciation history",
+            "empty_message": "No official appreciation series is available for this market yet.",
+            "notes": "Victoria can use Statistics Canada RPPI data. Smaller markets may need a separate source later.",
+            "chart_path": "",
+            "series_points": [],
+        }
+
+    width = 760
+    height = 240
+    padding_x = 18
+    padding_y = 18
+    min_value = min(values)
+    max_value = max(values)
+    value_span = max(max_value - min_value, 1.0)
+    step_x = (width - 2 * padding_x) / max(len(values) - 1, 1)
+    chart_height = height - 2 * padding_y
+
+    point_pairs: list[str] = []
+    series_points: list[dict[str, Any]] = []
+    for index, row in enumerate(series_rows):
+        raw_value = row.get("value_numeric")
+        if raw_value is None:
+            continue
+        value = float(raw_value)
+        x = padding_x + index * step_x
+        normalized_y = (value - min_value) / value_span
+        y = height - padding_y - normalized_y * chart_height
+        point_pairs.append(f"{x:.1f},{y:.1f}")
+        series_points.append(
+            {
+                "label": row.get("point_date"),
+                "display_value": f"{value:.1f}",
+                "x": round(x, 1),
+                "y": round(y, 1),
+            }
+        )
+
+    first_value = float(series_rows[0]["value_numeric"])
+    last_value = float(series_rows[-1]["value_numeric"])
+    total_change_percent = ((last_value / first_value) - 1.0) * 100 if first_value else None
+    return {
+        "available": True,
+        "title": "Appreciation history",
+        "empty_message": None,
+        "notes": series_rows[-1].get("notes"),
+        "chart_path": " ".join(point_pairs),
+        "series_points": series_points,
+        "start_label": series_rows[0].get("point_date"),
+        "end_label": series_rows[-1].get("point_date"),
+        "start_value": f"{first_value:.1f}",
+        "end_value": f"{last_value:.1f}",
+        "total_change_display": format_percent(total_change_percent, digits=1) if total_change_percent is not None else "—",
+        "source_name": series_rows[-1].get("source_name"),
+        "source_url": series_rows[-1].get("source_url"),
+        "confidence": series_rows[-1].get("confidence"),
+    }
+
+
+def build_market_housing_summary(
+    config: SupabaseReadConfig,
+    market_profile: dict[str, Any],
+) -> dict[str, Any]:
+    market_rows = fetch_market_reference_rows(config)
+    market_match = find_market_reference_match(
+        {
+            "location": market_profile.get("market_name"),
+            "property_type": "apartment",
+            "beds_min": 2,
+        },
+        market_rows,
+    )
+    if not market_match:
+        return {
+            "available": False,
+            "rent_display": "—",
+            "vacancy_display": "—",
+            "match_label": "No CMHC match",
+            "notes": "No CMHC rental-market baseline is currently available for this market.",
+            "source_url": None,
+            "source_date": None,
+            "confidence": None,
+        }
+
+    reference = market_match.get("market_reference") or {}
+    average_rent = reference.get("average_rent_monthly")
+    vacancy_rate = reference.get("vacancy_rate_percent")
+    return {
+        "available": average_rent is not None or vacancy_rate is not None,
+        "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
+        "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
+        "match_label": f"CMHC {market_match.get('match_type', 'reference').title()}",
+        "matched_market_name": market_match.get("matched_market_name"),
+        "notes": market_match.get("notes"),
+        "source_url": reference.get("source_url"),
+        "source_date": reference.get("source_date"),
+        "confidence": market_match.get("confidence"),
+    }
 
 
 def persist_saved_search_investment_defaults(

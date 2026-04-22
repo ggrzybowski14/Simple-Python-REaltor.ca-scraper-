@@ -161,6 +161,72 @@ code {
   margin-top: 1.5rem;
 }
 
+.market-panel {
+  margin-top: 1.5rem;
+}
+
+.market-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.market-metric-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.market-metric-card {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+}
+
+.market-metric-card strong {
+  font-size: 2rem;
+  line-height: 1.05;
+}
+
+.appreciation-grid {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 1rem;
+}
+
+.appreciation-summary-card,
+.appreciation-chart-card,
+.appreciation-empty-card {
+  align-content: start;
+}
+
+.appreciation-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+.appreciation-line {
+  stroke: var(--accent-deep);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.appreciation-point {
+  fill: var(--accent);
+  stroke: #fff8f0;
+  stroke-width: 2;
+}
+
+.appreciation-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .buy-box-grid {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr 1.15fr;
@@ -253,6 +319,12 @@ textarea {
 .card-list {
   display: grid;
   gap: 1rem;
+}
+
+.dashboard-search-list {
+  max-height: 620px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .card-actions {
@@ -356,39 +428,52 @@ textarea {
   gap: 1rem;
 }
 
+.source-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.source-mode-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .source-mode-card {
   display: grid;
-  gap: 0.9rem;
+  gap: 0.55rem;
   align-content: start;
-  padding: 1rem;
+  padding: 0.8rem;
   border-radius: 18px;
-  background: rgba(124, 100, 72, 0.06);
-  border: 1px solid rgba(124, 100, 72, 0.12);
+  background: rgba(124, 100, 72, 0.05);
+  border: 1px solid rgba(124, 100, 72, 0.16);
 }
 
 .source-mode-active {
-  border-color: rgba(47, 107, 79, 0.22);
-  background: rgba(47, 107, 79, 0.06);
+  border-color: rgba(47, 107, 79, 0.55);
+  background: rgba(47, 107, 79, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(47, 107, 79, 0.16);
 }
 
 .source-mode-header {
   display: flex;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   align-items: start;
 }
 
 .source-mode-header h3 {
   margin: 0;
+  font-size: 1rem;
 }
 
 .source-mode-body {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.45rem;
 }
 
 .source-mode-input {
-  max-width: 180px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .source-mode-stack {
@@ -405,11 +490,11 @@ textarea {
 
 .source-mode-value {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.18rem;
 }
 
 .source-mode-value strong {
-  font-size: 1.35rem;
+  font-size: 1.15rem;
 }
 
 .source-mode-advanced {
@@ -422,9 +507,9 @@ textarea {
 }
 
 .toggle-active {
-  background: rgba(47, 107, 79, 0.12);
+  background: rgba(47, 107, 79, 0.22);
   color: var(--green);
-  border-color: rgba(47, 107, 79, 0.22);
+  border-color: rgba(47, 107, 79, 0.48);
 }
 
 .inline-form {
@@ -743,8 +828,30 @@ textarea {
 
 .assumptions-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
+  align-items: start;
+}
+
+.assumptions-grid-purchase {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.assumptions-grid-costs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.assumptions-section {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.assumptions-section-costs {
+  gap: 0.75rem;
+}
+
+.assumptions-section-header h3 {
+  margin: 0;
 }
 
 .assumption-field {
@@ -758,6 +865,54 @@ textarea {
 
 .assumption-field-wide {
   grid-column: 1 / -1;
+}
+
+.assumption-field-modes {
+  gap: 1rem;
+}
+
+.assumptions-section-costs .assumption-field {
+  gap: 0.4rem;
+  padding: 0.7rem;
+}
+
+.assumptions-section-costs .assumption-label-row {
+  gap: 0.35rem;
+}
+
+.assumptions-section-costs .assumption-meta-display {
+  gap: 0.35rem;
+}
+
+.assumptions-section-costs .source-mode-card {
+  gap: 0.4rem;
+  padding: 0.65rem;
+}
+
+.assumptions-section-costs .source-mode-header {
+  gap: 0.35rem;
+}
+
+.assumptions-section-costs .source-mode-header h3 {
+  font-size: 0.92rem;
+}
+
+.assumptions-section-costs .source-mode-body {
+  gap: 0.35rem;
+}
+
+.assumptions-section-costs .source-mode-value strong {
+  font-size: 1.05rem;
+}
+
+.assumptions-section-costs input {
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+}
+
+.assumptions-section-costs .mini-button,
+.assumptions-section-costs .button-secondary {
+  padding: 0.55rem 0.85rem;
 }
 
 .assumption-label-row {
@@ -960,11 +1115,24 @@ textarea {
   }
 
   .assumptions-grid,
+  .assumptions-grid-purchase,
+  .assumptions-grid-costs,
   .assumption-meta-row {
     grid-template-columns: 1fr;
   }
 
   .market-rent-modes {
+    grid-template-columns: 1fr;
+  }
+
+  .source-mode-grid,
+  .source-mode-grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .market-metric-grid,
+  .market-metric-grid-two,
+  .appreciation-grid {
     grid-template-columns: 1fr;
   }
 

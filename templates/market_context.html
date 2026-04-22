@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}{{ market_profile.market_name }} Market Context | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Phase 5 Scaffold</p>
+    <h1>{{ market_profile.market_name }} Market Context</h1>
+    <p class="hero-copy">
+      This first market page is intentionally narrow. It brings together the core structured inputs we can source
+      reliably now so the future long-term return layer has a real market context behind it.
+    </p>
+    <div class="card-actions">
+      <a class="button-secondary button-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
+      <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to underwriting</a>
+    </div>
+  </div>
+  <div class="hero-metrics">
+    <div class="metric-card">
+      <span class="metric-label">Market Key</span>
+      <strong>{{ market_profile.market_key }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Province</span>
+      <strong>{{ market_profile.province or '—' }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Saved Searches</span>
+      <strong>{{ related_saved_searches|length }}</strong>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Status</span>
+      <strong>{{ market_profile.status|replace('_', ' ')|title }}</strong>
+    </div>
+  </div>
+</section>
+
+<section class="panel market-panel">
+  <div class="panel-header">
+    <p class="eyebrow">Housing Fundamentals</p>
+    <h2>Rental baseline currently feeding this market context</h2>
+  </div>
+  <div class="market-metric-grid market-metric-grid-two">
+    <article class="metric-card market-metric-card">
+      <span class="metric-label">Average 2-bedroom rent</span>
+      <strong>{{ housing_summary.rent_display }}</strong>
+      <p class="meta-line">{{ housing_summary.match_label }}{% if housing_summary.matched_market_name %} · {{ housing_summary.matched_market_name }}{% endif %}</p>
+      {% if housing_summary.notes %}
+      <p class="meta-line">{{ housing_summary.notes }}</p>
+      {% endif %}
+      {% if housing_summary.source_url %}
+      <a class="internal-link" href="{{ housing_summary.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+    </article>
+    <article class="metric-card market-metric-card">
+      <span class="metric-label">Vacancy rate</span>
+      <strong>{{ housing_summary.vacancy_display }}</strong>
+      <p class="meta-line">{{ housing_summary.match_label }}{% if housing_summary.confidence %} · {{ housing_summary.confidence|title }} confidence{% endif %}</p>
+      {% if housing_summary.source_date %}
+      <p class="meta-line">Source date: {{ housing_summary.source_date }}</p>
+      {% endif %}
+      {% if housing_summary.source_url %}
+      <a class="internal-link" href="{{ housing_summary.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+    </article>
+  </div>
+</section>
+
+<section class="panel market-panel">
+  <div class="panel-header">
+    <p class="eyebrow">Appreciation</p>
+    <h2>{{ appreciation_chart.title }}</h2>
+  </div>
+  {% if appreciation_chart.available %}
+  <div class="appreciation-grid">
+    <div class="metric-card market-metric-card appreciation-summary-card">
+      <span class="metric-label">Total index change</span>
+      <strong>{{ appreciation_chart.total_change_display }}</strong>
+      <p class="meta-line">{{ appreciation_chart.start_label }} to {{ appreciation_chart.end_label }}</p>
+      <p class="meta-line">Index moved from {{ appreciation_chart.start_value }} to {{ appreciation_chart.end_value }}</p>
+      {% if appreciation_chart.source_name %}
+      <p class="meta-line">{{ appreciation_chart.source_name }}{% if appreciation_chart.confidence %} · {{ appreciation_chart.confidence|title }} confidence{% endif %}</p>
+      {% endif %}
+      {% if appreciation_chart.source_url %}
+      <a class="internal-link" href="{{ appreciation_chart.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+    </div>
+    <div class="metric-card appreciation-chart-card">
+      <svg class="appreciation-chart" viewBox="0 0 760 240" role="img" aria-label="Residential property price index over time">
+        <polyline class="appreciation-line" fill="none" points="{{ appreciation_chart.chart_path }}"></polyline>
+        {% for point in appreciation_chart.series_points %}
+        <circle class="appreciation-point" cx="{{ point.x }}" cy="{{ point.y }}" r="4"></circle>
+        {% endfor %}
+      </svg>
+      <div class="appreciation-axis">
+        <span>{{ appreciation_chart.start_label }}</span>
+        <span>{{ appreciation_chart.end_label }}</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="metric-card market-metric-card appreciation-empty-card">
+    <span class="metric-label">Not available yet</span>
+    <strong>Series pending</strong>
+    <p class="meta-line">{{ appreciation_chart.empty_message }}</p>
+    {% if appreciation_chart.notes %}
+    <p class="meta-line">{{ appreciation_chart.notes }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel market-panel">
+  <div class="panel-header">
+    <p class="eyebrow">Demographics And Labour</p>
+    <h2>Structured market metrics</h2>
+  </div>
+  <div class="market-metric-grid">
+    {% for metric in market_metric_cards %}
+    <article class="metric-card market-metric-card">
+      <span class="metric-label">{{ metric.label }}</span>
+      <strong>{{ metric.display_value }}</strong>
+      {% if metric.source_name %}
+      <p class="meta-line">{{ metric.source_name }}{% if metric.confidence %} · {{ metric.confidence|title }} confidence{% endif %}</p>
+      {% endif %}
+      {% if metric.notes %}
+      <p class="meta-line">{{ metric.notes }}</p>
+      {% endif %}
+      {% if metric.source_url %}
+      <a class="internal-link" href="{{ metric.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="content-grid lower-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Linked Searches</p>
+      <h2>Saved searches in this market</h2>
+    </div>
+    {% if related_saved_searches %}
+    <div class="card-list compact">
+      {% for search in related_saved_searches %}
+      <article class="info-card">
+        <div class="card-topline">
+          <h3><a href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">{{ search.name }}</a></h3>
+          <span class="pill">#{{ search.id }}</span>
+        </div>
+        <p class="muted">{{ search.location }}</p>
+        <p class="meta-line">Beds: {{ search.beds_min or 'Any' }} | Type: {{ search.property_type or 'Any' }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No saved searches are currently linked to this market key.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Next Layer</p>
+      <h2>What is intentionally not populated yet</h2>
+    </div>
+    <p class="meta-line">
+      Appreciation history, rent growth assumptions, and AI-enriched market narrative are not seeded in this first pass.
+      The schema now leaves room for those layers without pretending the data is already reliable.
+    </p>
+    {% if market_profile.notes %}
+    <p class="meta-line">{{ market_profile.notes }}</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

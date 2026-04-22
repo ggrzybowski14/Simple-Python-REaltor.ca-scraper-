@@ -14,6 +14,7 @@
       <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="inline-form">
         <button type="submit" class="button-secondary">Update Search</button>
       </form>
+      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">Market Context</a>
       {% if sparse_listing_count %}
       <form method="post" action="{{ url_for('retry_sparse_details', saved_search_id=saved_search.id) }}" class="inline-form">
         <button type="submit" class="button-secondary">Retry Sparse Details</button>

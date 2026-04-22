@@ -3,6 +3,178 @@ from __future__ import annotations
 import app as webapp
 
 
+def test_market_context_route_renders_seeded_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Victoria Houses",
+            "location": "Victoria",
+            "property_type": "house",
+            "beds_min": 2,
+            "search_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_searches",
+        lambda config: [
+            {
+                "id": 7,
+                "name": "Victoria Houses",
+                "location": "Victoria",
+                "property_type": "house",
+                "beds_min": 2,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_profile",
+        lambda config, market_key: {
+            "market_key": market_key,
+            "market_name": "Victoria",
+            "province": "BC",
+            "status": "active",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_metrics",
+        lambda config, market_key: [
+            {
+                "metric_key": "population",
+                "value_numeric": 397237,
+                "source_name": "Statistics Canada 2021 Census",
+                "confidence": "high",
+                "notes": "Victoria CMA population in the 2021 Census.",
+            },
+            {
+                "metric_key": "population_growth_percent",
+                "value_numeric": 8.0,
+                "source_name": "Statistics Canada 2021 Census",
+                "confidence": "high",
+                "notes": "Population change from 2016 to 2021 for Victoria CMA.",
+            },
+            {
+                "metric_key": "unemployment_rate_percent",
+                "value_numeric": 6.9,
+                "source_name": "Statistics Canada 2021 Census",
+                "confidence": "medium",
+                "notes": "Census unemployment rate.",
+            },
+            {
+                "metric_key": "median_household_income",
+                "value_numeric": 75500,
+                "source_name": "Statistics Canada 2021 Census",
+                "confidence": "high",
+                "notes": "Median after-tax household income in 2020.",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        webapp,
+        "build_market_housing_summary",
+        lambda config, market_profile: {
+            "rent_display": "$2,327",
+            "vacancy_display": "3.1%",
+            "match_label": "CMHC Exact",
+            "matched_market_name": "Victoria",
+            "notes": "Exact market reference match found.",
+            "source_url": "https://example.com/cmhc",
+            "source_date": "2025-12-11",
+            "confidence": "high",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_metric_series",
+        lambda config, market_key, series_key: [
+            {"point_date": "2017-01-01", "value_numeric": 95.1, "source_name": "Statistics Canada RPPI", "source_url": "https://example.com/rppi", "confidence": "high", "notes": "RPPI series."},
+            {"point_date": "2020-10-01", "value_numeric": 118.3, "source_name": "Statistics Canada RPPI", "source_url": "https://example.com/rppi", "confidence": "high", "notes": "RPPI series."},
+        ],
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/saved-searches/7/market-context")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Victoria Market Context" in body
+    assert "$75,500" in body
+    assert "397,237" in body
+    assert "CMHC Exact" in body
+    assert "Appreciation history" in body
+    assert "24.4%" in body
+
+
+def test_market_context_by_key_route_renders_without_saved_search_id_in_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_searches",
+        lambda config: [
+            {
+                "id": 7,
+                "name": "Duncan Houses",
+                "location": "Duncan",
+                "property_type": "house",
+                "beds_min": 3,
+                "search_snapshot": {},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_profile",
+        lambda config, market_key: {
+            "market_key": market_key,
+            "market_name": "Duncan",
+            "province": "BC",
+            "status": "active",
+        },
+    )
+    monkeypatch.setattr(webapp, "fetch_market_metrics", lambda config, market_key: [])
+    monkeypatch.setattr(
+        webapp,
+        "build_market_housing_summary",
+        lambda config, market_profile: {
+            "rent_display": "$1,629",
+            "vacancy_display": "3.0%",
+            "match_label": "CMHC Exact",
+            "matched_market_name": "Duncan",
+            "notes": "Exact market reference match found.",
+            "source_url": "https://example.com/cmhc",
+            "source_date": "2025-12-11",
+            "confidence": "high",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_metric_series",
+        lambda config, market_key, series_key: [],
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/markets/duncan_bc")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Duncan Market Context" in body
+    assert "$1,629" in body
+    assert "Series pending" in body
+
+
 def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch) -> None:
     monkeypatch.setattr(
         webapp,

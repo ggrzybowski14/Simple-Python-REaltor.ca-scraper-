@@ -19,7 +19,7 @@ When a new external product reference comes up, capture:
 - any important caveats
 - whether it is `active inspiration` or `future inspiration`
 
-This file is not a feature spec. The product roadmap and implementation plan live in [PROJECT_OVERVIEW.md](/Users/georgia/Projects/simple realtor.ca scraper python/PROJECT_OVERVIEW.md:1).
+This file is not a feature spec or status report. The product roadmap and implementation plan live in [PROJECT_OVERVIEW.md](/Users/georgia/Projects/simple realtor.ca scraper python/PROJECT_OVERVIEW.md:1), and current implementation/setup notes live in [README.md](/Users/georgia/Projects/simple realtor.ca scraper python/README.md:1).
 
 ## Active Inspiration
 
@@ -119,6 +119,10 @@ Status:
 
 - `active inspiration`
 
+Current translation note:
+
+- the first market-context scaffold now exists in the codebase, so this inspiration has moved from abstract planning into an active implementation path
+
 ## Current Product Translation
 
 These references translate into the following concrete product direction for this repo:
@@ -151,7 +155,20 @@ Current direction for the future Canada-focused market analyzer:
   - supply constraints
   - liquidity / resale ease
   - rent-to-price style metrics
-  - summary of our own scraped listing inventory for that market
+- summary of our own scraped listing inventory for that market
+
+Current implementation status:
+
+- direct market routes now exist for seeded markets like `Duncan` and `Victoria`
+- the dashboard now includes a `Markets analyzed` panel
+- the current market page already shows:
+  - CMHC housing fundamentals
+  - structured Statistics Canada metrics
+  - an appreciation section with a real series when available and an explicit empty state when it is not
+
+Near-term implication:
+
+- future inspiration work should now focus less on whether market pages should exist and more on what the next highest-value fields and visual patterns should be inside that page
 
 Potential top-line card metrics:
 
@@ -176,3 +193,4 @@ That split should let future agents recover:
 - what inspired the product
 - what decisions have already been made
 - what the next implementation steps are
+- where to look for current functionality versus future direction

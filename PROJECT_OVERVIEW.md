@@ -30,7 +30,22 @@ The codebase now also has the first real underwriting layer:
 - BC-wide rule-based utilities and insurance defaults
 - listing-level smart maintenance and CapEx override support
 
+The codebase now also has the first real market-context layer:
+
+- direct market routes such as `/markets/victoria_bc`
+- dashboard navigation for unique analyzed markets
+- first-pass `market_profiles`, `market_metrics`, and `market_metric_series`
+- seeded Duncan and Victoria market stats
+- seeded Victoria appreciation history from Statistics Canada RPPI
+- explicit empty-state behavior for markets without a matched appreciation series yet
+
 This is still an early application, not a polished product, but it is already beyond pure scraping validation.
+
+This file should help a new agent answer three questions quickly:
+
+- what functionality is already real in the codebase
+- what product direction is actively being pursued next
+- which product decisions are already settled and should not be re-litigated by default
 
 ## What Works Today
 
@@ -78,6 +93,9 @@ The local website currently provides:
 - listing-detail underwriting summary and assumptions/source display
 - source-mode controls for rent, vacancy, utilities, and insurance
 - smart per-listing maintenance and CapEx estimate actions
+- direct market-context pages for analyzed markets
+- a dashboard-level `Markets analyzed` panel for fast market navigation
+- market-level structured metrics and appreciation scaffolding
 
 ### Buy Box
 
@@ -138,7 +156,7 @@ These are also separate layers.
 - the `listing analyzer` evaluates a specific property
 - the `market analyzer` evaluates a market like `Duncan` or `Victoria`
 
-The listing analyzer is the next active product area. The market analyzer is a planned future layer.
+The listing analyzer is the more mature product area. The market analyzer is no longer just future thinking; the first scaffold is now built, but it is still intentionally narrow.
 
 ## Next Major Product Area: Investment Analyzer
 
@@ -171,6 +189,57 @@ What is already implemented:
 - `Use AI` flow that applies listing-level AI rent suggestions across the underwriting table
 - listing-detail panel showing accepted AI rent reasoning
 - local automated tests for underwriting math, market matching, helper logic, and key routes
+
+## Market Context Layer
+
+The first market-context page is now in the product.
+
+Current page structure:
+
+- market header and linked saved searches
+- housing fundamentals
+- appreciation history
+- demographics and labour
+
+Current live market-context coverage:
+
+- `Duncan`
+  - CMHC housing fundamentals
+  - seeded Statistics Canada market stats
+  - no appreciation series yet
+- `Victoria`
+  - CMHC housing fundamentals
+  - seeded Statistics Canada market stats
+  - seeded Statistics Canada RPPI appreciation history
+
+This is intentionally not yet a full market analyzer. It is a first market brief that supports the future projection layer.
+
+### Current Data Model Direction
+
+The market-context layer now points toward these concepts:
+
+- `market_profiles`
+- `market_metrics`
+- `market_metric_series`
+
+This is important because it separates:
+
+- `saved_search`
+  the inventory collection rule
+- `market`
+  the contextual object shared across one or more saved searches
+
+That separation should remain intact as this area grows.
+
+### Settled Product Decisions
+
+The following should be treated as current working assumptions unless the user explicitly changes them:
+
+- `Vacancy %` stays stats-backed plus manually editable; it is not an AI mode right now
+- market pages should support partial coverage cleanly rather than forcing fake completeness
+- appreciation charts should only render when we have a real source series
+- smaller markets such as `Duncan` should show a clean empty state instead of borrowing a bad appreciation proxy
+- listing workflow clarity is still a higher priority than broad new product surface
 
 ### Strategy Scope For V1
 
@@ -269,9 +338,9 @@ Important product rule:
 
 ## Market Context Layer
 
-Market context is still important, but it should not block the first investment-analyzer release.
+Market context is now started, but it should not displace the current listing-analysis prototype priorities.
 
-Future market context inputs:
+Current or next market context inputs:
 
 - market rent baseline
 - rent growth trends
@@ -310,12 +379,15 @@ This gives the project:
 
 ## Immediate Next Step
 
-The next session should focus on underwriting UX clarity rather than more formulas.
+The next session should focus on two narrow follow-ups:
+
+- light presentation polish for the appreciation block and market-page copy
+- deciding the next appreciation-source path for smaller markets that are not covered by the current Statistics Canada series
 
 Concrete next step:
 
 - tighten the current assumption-card UI so active source modes and smart listing-level overrides are obvious at a glance
-- decide whether `Vacancy %` really needs an AI path or should stay `manual` plus `CMHC`
+- keep `Vacancy %` tied to market stats plus manual editing rather than adding an AI path
 - improve how the underwriting table surfaces that a row is using smart maintenance or smart CapEx
 - keep full reasoning and detailed override context on listing detail rather than bloating the analyzer table
 
@@ -381,8 +453,11 @@ Likely AI-estimated fields later:
 - estimated market rent
 - appreciation assumption
 - rent growth assumption
-- vacancy assumption where structured data is weak
 - insurance or maintenance guidance only if no stronger source exists
+
+Important carve-out:
+
+- `Vacancy %` should stay tied to market stats plus manual editing rather than becoming an AI-estimated field
 
 The product should treat AI as an assistant, not an invisible authority.
 
@@ -588,7 +663,7 @@ Likely scope:
 The highest-value build order from here is:
 
 1. tighten the investment-analyzer UI so source modes and smart per-listing overrides are easy to understand
-2. decide whether vacancy should remain `manual` plus `CMHC` or later add AI-assisted estimation
+2. keep vacancy sourced from market stats plus manual editing, and make that behavior clearer in the UI
 3. improve scrape result stability and first-page logging
 4. harden pagination until `results_count` and collected summaries align more reliably
 5. add listing workflow states such as shortlist / ignore / notes if needed for review
@@ -605,7 +680,7 @@ The next concrete goal for the project is:
 The next coding session should therefore start by answering:
 
 1. how should the analyzer page communicate smart listing overrides without forcing constant navigation into listing detail
-2. should vacancy stay as `manual` plus `CMHC` or gain a later AI-assisted mode
+2. how should the UI communicate that vacancy is stats-backed when available and otherwise manually entered
 3. do we need one more scraper reliability pass before relying more heavily on the active set
 
 ## Current Risks And Constraints
@@ -614,8 +689,19 @@ The next coding session should therefore start by answering:
 - AI-assisted buy-box results are only as good as the prompt and listing description quality
 - Realtor.ca can still show transient or stale result counts before the page fully settles
 - pagination controls on Realtor.ca are inconsistent enough that continued defensive handling is warranted
-- market data for smaller Canadian regions may be sparse, which is why phase-2 AI-assisted estimation is part of the roadmap
+- market data for smaller Canadian regions may be sparse, which is why selective AI assistance still makes sense for some assumptions such as rent, but not every field should become AI-driven
 - BC-wide utilities and insurance rule-based defaults are intentionally coarse and are not market-specific
 - smart maintenance and CapEx heuristics are useful triage aids, but they are not substitutes for a real condition review or reserve study
+
+## Settled Product Decisions
+
+These are the current decisions a new agent should treat as active unless explicitly changed:
+
+- the project remains local-first and single-user
+- the listing analyzer is the active product area; the market analyzer is future work
+- buy-box AI is allowed for fuzzy qualitative interpretation of listing descriptions
+- AI rent suggestions are allowed as a user-triggered aid
+- `Vacancy %` should come from market stats when available and remain manually editable rather than becoming an AI-driven field
+- `CapEx` stays separate from `NOI` in v1
 
 These are known issues, but the project is already usable enough to keep building on.
