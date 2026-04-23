@@ -111,7 +111,6 @@ def test_market_context_route_renders_seeded_metrics(monkeypatch) -> None:
     assert "397,237" in body
     assert "CMHC Exact" in body
     assert "Appreciation history" in body
-    assert "24.4%" in body
 
 
 def test_market_context_by_key_route_renders_without_saved_search_id_in_url(monkeypatch) -> None:
@@ -161,8 +160,20 @@ def test_market_context_by_key_route_renders_without_saved_search_id_in_url(monk
     )
     monkeypatch.setattr(
         webapp,
-        "fetch_market_metric_series",
-        lambda config, market_key, series_key: [],
+        "build_preferred_appreciation_context",
+        lambda config, market_key, property_type_slug="composite", allow_proxy=False: {
+            "title": "Benchmark price history",
+            "metric_cards": [],
+            "available": False,
+            "empty_message": "No official appreciation series is available for this market yet.",
+            "notes": "CREA HPI is the primary appreciation source for supported markets.",
+            "proxy_available": True,
+            "proxy_active": False,
+            "proxy_label": "Vancouver Island proxy",
+            "proxy_market_name": "Vancouver Island",
+            "source_name": None,
+            "ai_estimate_available": True,
+        },
     )
 
     client = webapp.app.test_client()
@@ -172,7 +183,236 @@ def test_market_context_by_key_route_renders_without_saved_search_id_in_url(monk
     body = response.get_data(as_text=True)
     assert "Duncan Market Context" in body
     assert "$1,629" in body
-    assert "Series pending" in body
+    assert "Use Vancouver Island proxy" in body
+
+
+def test_market_context_by_key_route_offers_proxy_action_when_available(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(webapp, "fetch_saved_searches", lambda config: [])
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_profile",
+        lambda config, market_key: {
+            "market_key": market_key,
+            "market_name": "Duncan",
+            "province": "BC",
+            "status": "active",
+        },
+    )
+    monkeypatch.setattr(webapp, "fetch_market_metrics", lambda config, market_key: [])
+    monkeypatch.setattr(
+        webapp,
+        "build_market_housing_summary",
+        lambda config, market_profile: {
+            "rent_display": "$1,629",
+            "vacancy_display": "3.0%",
+            "match_label": "CMHC Exact",
+            "matched_market_name": "Duncan",
+            "notes": None,
+            "source_url": None,
+            "source_date": None,
+            "confidence": "high",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "build_preferred_appreciation_context",
+        lambda config, market_key, property_type_slug="composite", allow_proxy=False: {
+            "title": "Benchmark price history",
+            "metric_cards": [],
+            "available": False,
+            "empty_message": "No official appreciation series is available for this market yet.",
+            "notes": None,
+            "proxy_available": True,
+            "proxy_active": False,
+            "proxy_label": "Vancouver Island proxy",
+            "proxy_market_name": "Vancouver Island",
+            "source_name": None,
+            "ai_estimate_available": True,
+        },
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/markets/duncan_bc")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Use Vancouver Island proxy" in body
+
+
+def test_market_appreciation_api_returns_proxy_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "build_preferred_appreciation_context",
+        lambda config, market_key, property_type_slug="composite", allow_proxy=False: {
+            "source_key": "crea_hpi_proxy",
+            "source_name": "CREA MLS HPI",
+            "property_type_label": "Composite",
+            "available": True,
+            "latest_benchmark_price": 700000,
+            "latest_benchmark_price_display": "$700,000",
+            "latest_date": "2026-03-01",
+            "trend_direction": "mixed_market",
+            "trend_label": "Mixed Market",
+            "data_quality_flag": "low",
+            "empty_message": None,
+            "notes": None,
+            "proxy_available": True,
+            "proxy_active": True,
+            "proxy_label": "Vancouver Island proxy",
+            "proxy_market_name": "Vancouver Island",
+            "metric_cards": [
+                {"label": "12-Month Change", "value": "1.2%"},
+                {"label": "1-Month Change", "value": "0.2%"},
+                {"label": "5-Year Annualized", "value": "4.1%"},
+                {"label": "10-Year Annualized", "value": "4.8%"},
+            ],
+        },
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/api/markets/duncan_bc/appreciation?use_proxy=1")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["proxy_available"] is True
+    assert payload["proxy_active"] is True
+    assert payload["proxy_label"] == "Vancouver Island proxy"
+
+
+def test_market_context_route_renders_crea_metric_cards(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Victoria Houses",
+            "location": "Victoria",
+            "property_type": "house",
+            "beds_min": 2,
+            "search_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(webapp, "fetch_saved_searches", lambda config: [])
+    monkeypatch.setattr(
+        webapp,
+        "fetch_market_profile",
+        lambda config, market_key: {
+            "market_key": market_key,
+            "market_name": "Victoria",
+            "province": "BC",
+            "status": "active",
+        },
+    )
+    monkeypatch.setattr(webapp, "fetch_market_metrics", lambda config, market_key: [])
+    monkeypatch.setattr(
+        webapp,
+        "build_market_housing_summary",
+        lambda config, market_profile: {
+            "rent_display": "$2,327",
+            "vacancy_display": "3.1%",
+            "match_label": "CMHC Exact",
+            "matched_market_name": "Victoria",
+            "notes": None,
+            "source_url": None,
+            "source_date": None,
+            "confidence": "high",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "build_preferred_appreciation_context",
+        lambda config, market_key, property_type_slug="composite", allow_proxy=False: {
+            "available": True,
+            "title": "Appreciation history",
+            "total_change_display": "44.0%",
+            "start_label": "2016-01-01",
+            "end_label": "2026-01-01",
+            "start_value": "100.0",
+            "end_value": "144.0",
+            "source_name": "CREA MLS HPI",
+            "confidence": "high",
+            "source_url": None,
+            "chart_path": "0,0 1,1",
+            "series_points": [],
+            "metric_cards": [
+                {"label": "Benchmark Price", "value": "$890,000"},
+                {"label": "5-Year Annualized", "value": "6.2%"},
+            ],
+            "property_type_label": "Composite",
+            "data_quality_flag": "high",
+            "trend_label": "Strong Long Term Growth",
+            "latest_benchmark_price_display": "$890,000",
+            "latest_date": "2026-01-01",
+            "method_notes": None,
+        },
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/saved-searches/7/market-context")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Benchmark Price" in body
+    assert "$890,000" in body
+    assert "5-Year Annualized" in body
+    assert "CREA MLS HPI" in body
+
+
+def test_market_appreciation_api_returns_preferred_payload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "build_preferred_appreciation_context",
+        lambda config, market_key, property_type_slug="composite", allow_proxy=False: {
+            "source_key": "crea_hpi",
+            "source_name": "CREA MLS HPI",
+            "property_type_label": "Composite",
+            "available": True,
+            "latest_benchmark_price": 890000,
+            "latest_benchmark_price_display": "$890,000",
+            "latest_date": "2026-01-01",
+            "trend_direction": "strong_long_term_growth",
+            "trend_label": "Strong Long Term Growth",
+            "data_quality_flag": "high",
+            "empty_message": None,
+            "notes": None,
+            "metric_cards": [
+                {"label": "12-Month Change", "value": "8.5%"},
+                {"label": "1-Month Change", "value": "0.6%"},
+                {"label": "5-Year Annualized", "value": "6.2%"},
+                {"label": "10-Year Annualized", "value": "5.4%"},
+            ],
+        },
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/api/markets/victoria_bc/appreciation")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source_key"] == "crea_hpi"
+    assert payload["latest_benchmark_price_display"] == "$890,000"
+    assert payload["appreciation_5y_cagr"] == "6.2%"
+    assert payload["trend_label"] == "Strong Long Term Growth"
 
 
 def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch) -> None:

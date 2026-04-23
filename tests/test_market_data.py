@@ -4,7 +4,9 @@ from investment import merge_investment_defaults
 from market_data import (
     build_market_profile_from_saved_search,
     find_market_reference_match,
+    get_appreciation_proxy_market,
     get_market_seed_bootstrap_payload,
+    get_rental_property_type_label,
     hydrate_defaults_with_market_data,
     infer_province,
 )
@@ -73,6 +75,62 @@ def test_find_market_reference_match_uses_proxy_for_duncan() -> None:
     assert "apartment-based" in match["notes"]
 
 
+def test_find_market_reference_match_treats_townhouse_as_valid_house_like_baseline() -> None:
+    saved_search = {
+        "location": "Victoria",
+        "property_type": "house",
+        "beds_min": 2,
+    }
+    market_rows = [
+        {
+            "id": 21,
+            "market_key": "victoria_bc",
+            "market_name": "Victoria",
+            "property_type": "apartment",
+            "bedroom_count": 2,
+            "average_rent_monthly": 2300,
+        },
+        {
+            "id": 22,
+            "market_key": "victoria_bc",
+            "market_name": "Victoria",
+            "property_type": "townhouse",
+            "bedroom_count": 2,
+            "average_rent_monthly": 2600,
+        },
+    ]
+
+    match = find_market_reference_match(saved_search, market_rows)
+
+    assert match is not None
+    assert match["market_reference"]["id"] == 22
+    assert match["property_type_mismatch"] is False
+
+
+def test_find_market_reference_match_accepts_condo_apartment_for_condo_search() -> None:
+    saved_search = {
+        "location": "Victoria",
+        "property_type": "condo",
+        "beds_min": 2,
+    }
+    market_rows = [
+        {
+            "id": 31,
+            "market_key": "victoria_bc",
+            "market_name": "Victoria",
+            "property_type": "condo_apartment",
+            "bedroom_count": 2,
+            "average_rent_monthly": 2550,
+        }
+    ]
+
+    match = find_market_reference_match(saved_search, market_rows)
+
+    assert match is not None
+    assert match["market_reference"]["id"] == 31
+    assert match["property_type_mismatch"] is False
+
+
 def test_hydrate_defaults_with_market_data_sets_missing_rent_and_vacancy() -> None:
     defaults = merge_investment_defaults({"market_rent_monthly": {"value": None}})
     market_match = {
@@ -135,3 +193,19 @@ def test_get_market_seed_bootstrap_payload_returns_seed_bundle_for_sidney() -> N
     assert bundle["profile"]["market_key"] == "sidney_bc"
     assert len(bundle["metrics"]) == 4
     assert bundle["series"] == []
+
+
+def test_get_appreciation_proxy_market_returns_curated_vancouver_island_proxy() -> None:
+    proxy = get_appreciation_proxy_market("duncan_bc")
+
+    assert proxy is not None
+    assert proxy["proxy_key"] == "vancouver_island_bc"
+    assert proxy["confidence"] == "low"
+
+
+def test_get_appreciation_proxy_market_returns_none_for_unlisted_market() -> None:
+    assert get_appreciation_proxy_market("courtenay_bc") is None
+
+
+def test_get_rental_property_type_label_returns_friendly_labels() -> None:
+    assert get_rental_property_type_label("semi_detached") == "Semi-detached / duplex"

@@ -186,6 +186,26 @@ code {
   line-height: 1.05;
 }
 
+.appreciation-layout-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.appreciation-top-card {
+  min-height: 11.25rem;
+}
+
+.appreciation-side-card {
+  grid-column: 1;
+  min-height: 9.5rem;
+}
+
+.appreciation-chart-slot {
+  grid-column: 2 / 5;
+}
+
 .appreciation-grid {
   display: grid;
   grid-template-columns: 0.85fr 1.15fr;
@@ -205,11 +225,55 @@ code {
   overflow: visible;
 }
 
+.appreciation-gridline {
+  stroke: rgba(82, 70, 48, 0.12);
+  stroke-width: 1;
+}
+
+.appreciation-axis-line,
+.appreciation-axis-tick {
+  stroke: rgba(82, 70, 48, 0.45);
+  stroke-width: 1.5;
+}
+
+.appreciation-y-label,
+.appreciation-x-label {
+  fill: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.appreciation-axis-title {
+  fill: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.appreciation-y-label {
+  text-anchor: end;
+}
+
+.appreciation-x-label {
+  text-anchor: middle;
+}
+
+.appreciation-axis-title-x {
+  text-anchor: middle;
+}
+
 .appreciation-line {
   stroke: var(--accent-deep);
   stroke-width: 4;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.proxy-warning {
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .appreciation-point {
@@ -1132,8 +1196,14 @@ textarea {
 
   .market-metric-grid,
   .market-metric-grid-two,
+  .appreciation-layout-grid,
   .appreciation-grid {
     grid-template-columns: 1fr;
+  }
+
+  .appreciation-side-card,
+  .appreciation-chart-slot {
+    grid-column: auto;
   }
 
   .metric-card-wide {

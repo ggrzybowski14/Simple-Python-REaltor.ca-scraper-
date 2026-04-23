@@ -13,9 +13,10 @@ from threading import Lock, Thread
 from typing import Any
 from urllib import error, parse, request
 
-from flask import Flask, abort, redirect, render_template, request as flask_request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request as flask_request, url_for
 
 from ai_underwriting import build_rent_ai_payload, build_rent_ai_prompt_text, call_openai_rent_suggestions
+from crea_hpi import SERIES_KEY_BY_PROPERTY_TYPE, format_signal_label
 from investment import (
     build_defaults_snapshot_from_form,
     calculate_underwriting,
@@ -29,7 +30,9 @@ from investment import (
 from market_data import (
     build_market_profile_from_saved_search,
     find_market_reference_match,
+    get_appreciation_proxy_market,
     get_market_seed_bootstrap_payload,
+    get_rental_property_type_label,
     hydrate_defaults_with_market_data,
     infer_province,
     normalize_market_key,
@@ -721,6 +724,7 @@ def create_app() -> Flask:
     @app.route("/markets/<market_key>")
     def market_context_by_key(market_key: str) -> str:
         config = get_supabase_read_config()
+        allow_proxy = flask_request.args.get("use_proxy") == "1"
         saved_searches = fetch_saved_searches(config)
         matching_saved_searches = [
             search for search in saved_searches
@@ -738,8 +742,10 @@ def create_app() -> Flask:
             market_profile = derive_market_profile_from_saved_search(matching_saved_searches[0])
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
-        appreciation_chart = build_appreciation_chart(
-            fetch_market_metric_series(config, market_profile["market_key"], series_key="residential_property_price_index_total")
+        appreciation_chart = build_preferred_appreciation_context(
+            config,
+            market_profile["market_key"],
+            allow_proxy=allow_proxy,
         )
         return render_template(
             "market_context.html",
@@ -789,6 +795,7 @@ def create_app() -> Flask:
     @app.route("/saved-searches/<int:saved_search_id>/market-context")
     def market_context(saved_search_id: int) -> str:
         config = get_supabase_read_config()
+        allow_proxy = flask_request.args.get("use_proxy") == "1"
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
@@ -800,8 +807,10 @@ def create_app() -> Flask:
             market_profile = bootstrap_market_context(config, saved_search, fallback_profile=market_profile)
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
-        appreciation_chart = build_appreciation_chart(
-            fetch_market_metric_series(config, market_profile["market_key"], series_key="residential_property_price_index_total")
+        appreciation_chart = build_preferred_appreciation_context(
+            config,
+            market_profile["market_key"],
+            allow_proxy=allow_proxy,
         )
         related_saved_searches = [
             search
@@ -816,6 +825,45 @@ def create_app() -> Flask:
             market_metric_cards=build_market_metric_cards(market_metrics),
             appreciation_chart=appreciation_chart,
             related_saved_searches=related_saved_searches,
+        )
+
+    @app.route("/api/markets/<market_key>/appreciation")
+    def api_market_appreciation(market_key: str) -> Any:
+        config = get_supabase_read_config()
+        property_type_slug = (flask_request.args.get("property_type") or "composite").strip().lower()
+        allow_proxy = flask_request.args.get("use_proxy") == "1"
+        appreciation = build_preferred_appreciation_context(
+            config,
+            market_key,
+            property_type_slug=property_type_slug,
+            allow_proxy=allow_proxy,
+        )
+        return jsonify(
+            {
+                "market_key": market_key,
+                "property_type_slug": property_type_slug,
+                "proxy_available": appreciation.get("proxy_available"),
+                "proxy_active": appreciation.get("proxy_active"),
+                "proxy_label": appreciation.get("proxy_label"),
+                "proxy_market_name": appreciation.get("proxy_market_name"),
+                "source_key": appreciation.get("source_key"),
+                "source_name": appreciation.get("source_name"),
+                "property_type_label": appreciation.get("property_type_label"),
+                "available": appreciation.get("available"),
+                "latest_benchmark_price": appreciation.get("latest_benchmark_price"),
+                "latest_benchmark_price_display": appreciation.get("latest_benchmark_price_display"),
+                "latest_date": appreciation.get("latest_date"),
+                "change_12m": next((card["value"] for card in appreciation.get("metric_cards", []) if card["label"] == "12-Month Change"), None),
+                "change_1m": next((card["value"] for card in appreciation.get("metric_cards", []) if card["label"] == "1-Month Change"), None),
+                "appreciation_5y_cagr": next((card["value"] for card in appreciation.get("metric_cards", []) if card["label"] == "5-Year Annualized"), None),
+                "appreciation_10y_cagr": next((card["value"] for card in appreciation.get("metric_cards", []) if card["label"] == "10-Year Annualized"), None),
+                "trend_direction": appreciation.get("trend_direction"),
+                "trend_label": appreciation.get("trend_label"),
+                "data_quality_flag": appreciation.get("data_quality_flag"),
+                "empty_message": appreciation.get("empty_message"),
+                "notes": appreciation.get("notes"),
+                "metric_cards": appreciation.get("metric_cards", []),
+            }
         )
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer")
@@ -1552,7 +1600,7 @@ def fetch_market_reference_rows(config: SupabaseReadConfig) -> list[dict[str, An
                     "id,source,source_dataset,market_name,province,market_key,geography_type,"
                     "property_type,bedroom_count,average_rent_monthly,vacancy_rate_percent,source_url,source_date"
                 ),
-                "limit": 500,
+                "limit": 2000,
             },
         )
     except RuntimeError:
@@ -1659,22 +1707,133 @@ def fetch_market_metric_series(
     return result if isinstance(result, list) else []
 
 
-def build_appreciation_chart(series_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def fetch_hpi_market_metric_snapshot(
+    config: SupabaseReadConfig,
+    market_key: str,
+    *,
+    property_type_slug: str = "composite",
+) -> dict[str, Any] | None:
+    try:
+        result = supabase_get(
+            config,
+            "hpi_market_metrics",
+            query={
+                "source": "eq.crea_hpi",
+                "market_key": f"eq.{market_key}",
+                "property_type_slug": f"eq.{property_type_slug}",
+                "select": (
+                    "market_key,market_name,province,property_type_slug,property_type_label,"
+                    "latest_date,latest_index_value,latest_benchmark_price,"
+                    "appreciation_5y_total_pct,appreciation_5y_cagr,"
+                    "appreciation_10y_total_pct,appreciation_10y_cagr,"
+                    "change_12m_pct,change_3m_pct,change_3m_annualized_pct,change_1m_pct,"
+                    "trend_direction,data_quality_flag,observation_count,method_notes"
+                ),
+                "limit": 1,
+            },
+        )
+    except RuntimeError:
+        return None
+    rows = result if isinstance(result, list) else []
+    return rows[0] if rows else None
+
+
+def fetch_hpi_observation_series(
+    config: SupabaseReadConfig,
+    market_key: str,
+    *,
+    property_type_slug: str = "composite",
+) -> list[dict[str, Any]]:
+    try:
+        result = supabase_get(
+            config,
+            "hpi_observations",
+            query={
+                "source": "eq.crea_hpi",
+                "market_key": f"eq.{market_key}",
+                "property_type_slug": f"eq.{property_type_slug}",
+                "seasonal_adjustment": "eq.seasonally_adjusted",
+                "select": "point_date,index_value,benchmark_price,property_type_label",
+                "order": "point_date.asc",
+            },
+        )
+    except RuntimeError:
+        return []
+    return result if isinstance(result, list) else []
+
+
+def build_appreciation_metric_cards(snapshot: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not snapshot:
+        return []
+
+    def format_ratio_percent(value: Any) -> str:
+        if value is None:
+            return "—"
+        return format_percent(float(value) * 100.0, digits=1)
+
+    return [
+        {
+            "label": "Latest Market-Wide Benchmark Home Price",
+            "value": format_currency(float(snapshot["latest_benchmark_price"])) if snapshot.get("latest_benchmark_price") is not None else "—",
+            "meta": f"As of {snapshot['latest_date']}" if snapshot.get("latest_date") else None,
+        },
+        {
+            "label": "5-Year Annualized",
+            "value": format_ratio_percent(snapshot.get("appreciation_5y_cagr")),
+            "meta": "Calculated from the HPI index",
+        },
+        {
+            "label": "10-Year Annualized",
+            "value": format_ratio_percent(snapshot.get("appreciation_10y_cagr")),
+            "meta": "Calculated from the HPI index",
+        },
+        {
+            "label": "12-Month Change",
+            "value": format_ratio_percent(snapshot.get("change_12m_pct")),
+            "meta": "Calculated from the HPI index",
+        },
+        {
+            "label": "1-Month Change",
+            "value": format_ratio_percent(snapshot.get("change_1m_pct")),
+            "meta": "Calculated from the HPI index",
+        },
+    ]
+
+
+def format_axis_currency(value: float) -> str:
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.0f}k"
+    return f"${value:,.0f}"
+
+
+def build_appreciation_chart(
+    series_rows: list[dict[str, Any]],
+    *,
+    chart_title: str = "Appreciation history",
+    y_axis_label: str = "Index value",
+    start_at_zero: bool = False,
+    value_key: str = "value_numeric",
+    total_change_label: str = "Total change",
+    value_summary_label: str = "Value moved from",
+    value_label_formatter=None,
+) -> dict[str, Any]:
     if len(series_rows) < 2:
         return {
             "available": False,
-            "title": "Appreciation history",
+            "title": chart_title,
             "empty_message": "No official appreciation series is available for this market yet.",
             "notes": "Victoria can use Statistics Canada RPPI data. Smaller markets may need a separate source later.",
             "chart_path": "",
             "series_points": [],
         }
 
-    values = [float(row["value_numeric"]) for row in series_rows if row.get("value_numeric") is not None]
+    values = [float(row[value_key]) for row in series_rows if row.get(value_key) is not None]
     if len(values) < 2:
         return {
             "available": False,
-            "title": "Appreciation history",
+            "title": chart_title,
             "empty_message": "No official appreciation series is available for this market yet.",
             "notes": "Victoria can use Statistics Canada RPPI data. Smaller markets may need a separate source later.",
             "chart_path": "",
@@ -1682,49 +1841,90 @@ def build_appreciation_chart(series_rows: list[dict[str, Any]]) -> dict[str, Any
         }
 
     width = 760
-    height = 240
-    padding_x = 18
-    padding_y = 18
-    min_value = min(values)
+    height = 280
+    padding_left = 94
+    padding_right = 18
+    padding_top = 18
+    padding_bottom = 36
+    min_value = 0.0 if start_at_zero else min(values)
     max_value = max(values)
     value_span = max(max_value - min_value, 1.0)
-    step_x = (width - 2 * padding_x) / max(len(values) - 1, 1)
-    chart_height = height - 2 * padding_y
+    chart_width = width - padding_left - padding_right
+    chart_height = height - padding_top - padding_bottom
+    step_x = chart_width / max(len(values) - 1, 1)
 
     point_pairs: list[str] = []
     series_points: list[dict[str, Any]] = []
     for index, row in enumerate(series_rows):
-        raw_value = row.get("value_numeric")
+        raw_value = row.get(value_key)
         if raw_value is None:
             continue
         value = float(raw_value)
-        x = padding_x + index * step_x
+        x = padding_left + index * step_x
         normalized_y = (value - min_value) / value_span
-        y = height - padding_y - normalized_y * chart_height
+        y = height - padding_bottom - normalized_y * chart_height
         point_pairs.append(f"{x:.1f},{y:.1f}")
         series_points.append(
             {
                 "label": row.get("point_date"),
-                "display_value": f"{value:.1f}",
+                "display_value": value_label_formatter(value) if value_label_formatter else f"{value:.1f}",
                 "x": round(x, 1),
                 "y": round(y, 1),
             }
         )
 
-    first_value = float(series_rows[0]["value_numeric"])
-    last_value = float(series_rows[-1]["value_numeric"])
+    y_tick_count = 4
+    y_axis_ticks: list[dict[str, Any]] = []
+    for tick_index in range(y_tick_count + 1):
+        ratio = tick_index / y_tick_count
+        tick_value = min_value + (value_span * (1.0 - ratio))
+        y = padding_top + chart_height * ratio
+        y_axis_ticks.append(
+            {
+                "label": value_label_formatter(tick_value) if value_label_formatter else f"{tick_value:.0f}",
+                "x": padding_left,
+                "y": round(y, 1),
+                "line_x2": width - padding_right,
+            }
+        )
+
+    candidate_indices = sorted({0, len(series_rows) // 2, len(series_rows) - 1})
+    x_axis_ticks: list[dict[str, Any]] = []
+    for index in candidate_indices:
+        row = series_rows[index]
+        x_axis_ticks.append(
+            {
+                "label": row.get("point_date"),
+                "x": round(padding_left + index * step_x, 1),
+                "y": height - padding_bottom,
+            }
+        )
+
+    first_value = float(series_rows[0][value_key])
+    last_value = float(series_rows[-1][value_key])
     total_change_percent = ((last_value / first_value) - 1.0) * 100 if first_value else None
     return {
         "available": True,
-        "title": "Appreciation history",
+        "title": chart_title,
+        "total_change_label": total_change_label,
+        "value_summary_label": value_summary_label,
         "empty_message": None,
         "notes": series_rows[-1].get("notes"),
+        "y_axis_label": y_axis_label,
+        "chart_width": width,
+        "chart_height": height,
+        "plot_left": padding_left,
+        "plot_right": width - padding_right,
+        "plot_top": padding_top,
+        "plot_bottom": height - padding_bottom,
         "chart_path": " ".join(point_pairs),
         "series_points": series_points,
+        "y_axis_ticks": y_axis_ticks,
+        "x_axis_ticks": x_axis_ticks,
         "start_label": series_rows[0].get("point_date"),
         "end_label": series_rows[-1].get("point_date"),
-        "start_value": f"{first_value:.1f}",
-        "end_value": f"{last_value:.1f}",
+        "start_value": value_label_formatter(first_value) if value_label_formatter else f"{first_value:.1f}",
+        "end_value": value_label_formatter(last_value) if value_label_formatter else f"{last_value:.1f}",
         "total_change_display": format_percent(total_change_percent, digits=1) if total_change_percent is not None else "—",
         "source_name": series_rows[-1].get("source_name"),
         "source_url": series_rows[-1].get("source_url"),
@@ -1732,11 +1932,186 @@ def build_appreciation_chart(series_rows: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def build_preferred_appreciation_context(
+    config: SupabaseReadConfig,
+    market_key: str,
+    *,
+    property_type_slug: str = "composite",
+    allow_proxy: bool = False,
+) -> dict[str, Any]:
+    hpi_snapshot = fetch_hpi_market_metric_snapshot(config, market_key, property_type_slug=property_type_slug)
+    if hpi_snapshot is not None:
+        observation_rows = fetch_hpi_observation_series(
+            config,
+            market_key,
+            property_type_slug=property_type_slug,
+        )
+        chart = build_appreciation_chart(
+            observation_rows,
+            chart_title="Benchmark price history",
+            y_axis_label="Benchmark price (CAD)",
+            start_at_zero=True,
+            value_key="benchmark_price",
+            total_change_label="Long-term benchmark change",
+            value_summary_label="Benchmark moved from",
+            value_label_formatter=format_axis_currency,
+        )
+        chart.update(
+            {
+                "source_key": "crea_hpi",
+                "source_name": "CREA MLS HPI",
+                "property_type_label": hpi_snapshot.get("property_type_label") or property_type_slug.replace("_", " ").title(),
+                "latest_date": hpi_snapshot.get("latest_date"),
+                "latest_benchmark_price": hpi_snapshot.get("latest_benchmark_price"),
+                "latest_benchmark_price_display": (
+                    format_currency(float(hpi_snapshot["latest_benchmark_price"]))
+                    if hpi_snapshot.get("latest_benchmark_price") is not None
+                    else "—"
+                ),
+                "metric_cards": build_appreciation_metric_cards(hpi_snapshot),
+                "trend_direction": hpi_snapshot.get("trend_direction"),
+                "trend_label": format_signal_label(hpi_snapshot.get("trend_direction") or "insufficient_data"),
+                "data_quality_flag": hpi_snapshot.get("data_quality_flag"),
+                "method_notes": hpi_snapshot.get("method_notes"),
+                "benchmark_explainer": (
+                    f"The latest benchmark shown is the CREA {hpi_snapshot.get('property_type_label', 'Composite')} "
+                    f"market-wide benchmark home price for {hpi_snapshot.get('market_name', market_key)} as of {hpi_snapshot.get('latest_date')}."
+                ),
+                "ai_estimate_available": True,
+            }
+        )
+        if not chart["available"]:
+            chart["empty_message"] = "CREA HPI metrics exist, but the series points have not been published yet."
+            chart["notes"] = hpi_snapshot.get("method_notes")
+        return chart
+
+    proxy_market = get_appreciation_proxy_market(market_key)
+    if allow_proxy and proxy_market is not None:
+        proxy_snapshot = fetch_hpi_market_metric_snapshot(
+            config,
+            proxy_market["proxy_key"],
+            property_type_slug=property_type_slug,
+        )
+        if proxy_snapshot is not None:
+            proxy_observation_rows = fetch_hpi_observation_series(
+                config,
+                proxy_market["proxy_key"],
+                property_type_slug=property_type_slug,
+            )
+            chart = build_appreciation_chart(
+                proxy_observation_rows,
+                chart_title="Benchmark price history",
+                y_axis_label="Benchmark price (CAD)",
+                start_at_zero=True,
+                value_key="benchmark_price",
+                total_change_label="Long-term benchmark change",
+                value_summary_label="Benchmark moved from",
+                value_label_formatter=format_axis_currency,
+            )
+            chart.update(
+                {
+                    "source_key": "crea_hpi_proxy",
+                    "source_name": "CREA MLS HPI",
+                    "property_type_label": proxy_snapshot.get("property_type_label") or property_type_slug.replace("_", " ").title(),
+                    "latest_date": proxy_snapshot.get("latest_date"),
+                    "latest_benchmark_price": proxy_snapshot.get("latest_benchmark_price"),
+                    "latest_benchmark_price_display": (
+                        format_currency(float(proxy_snapshot["latest_benchmark_price"]))
+                        if proxy_snapshot.get("latest_benchmark_price") is not None
+                        else "—"
+                    ),
+                    "metric_cards": build_appreciation_metric_cards(proxy_snapshot),
+                    "trend_direction": proxy_snapshot.get("trend_direction"),
+                    "trend_label": format_signal_label(proxy_snapshot.get("trend_direction") or "insufficient_data"),
+                    "data_quality_flag": proxy_market["confidence"],
+                    "method_notes": None,
+                    "benchmark_explainer": proxy_market["notes"],
+                    "proxy_label": proxy_market["label"],
+                    "proxy_market_name": proxy_market["proxy_name"],
+                    "proxy_active": True,
+                    "proxy_available": True,
+                    "ai_estimate_available": True,
+                }
+            )
+            return chart
+
+    fallback_chart = build_appreciation_chart(
+        fetch_market_metric_series(config, market_key, series_key="residential_property_price_index_total")
+    )
+    fallback_chart.update(
+        {
+            "source_key": "fallback_series",
+            "property_type_label": None,
+            "latest_date": None,
+            "latest_benchmark_price": None,
+            "latest_benchmark_price_display": "—",
+            "metric_cards": [],
+            "trend_direction": None,
+            "trend_label": None,
+            "data_quality_flag": None,
+            "method_notes": None,
+            "benchmark_explainer": None,
+            "proxy_label": proxy_market["label"] if proxy_market else None,
+            "proxy_market_name": proxy_market["proxy_name"] if proxy_market else None,
+            "proxy_active": False,
+            "proxy_available": proxy_market is not None,
+            "ai_estimate_available": True,
+        }
+    )
+    if not fallback_chart["available"]:
+        fallback_chart["notes"] = (
+            "CREA HPI is the primary appreciation source for supported markets. "
+            "Markets without official coverage continue to show a clean empty state for now."
+        )
+    return fallback_chart
+
+
 def build_market_housing_summary(
     config: SupabaseReadConfig,
     market_profile: dict[str, Any],
 ) -> dict[str, Any]:
     market_rows = fetch_market_reference_rows(config)
+    exact_market_key = market_profile.get("market_key")
+    exact_rows = [row for row in market_rows if row.get("market_key") == exact_market_key]
+
+    grouped_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in exact_rows:
+        property_type = (row.get("property_type") or "").strip().lower()
+        if property_type:
+            grouped_rows.setdefault(property_type, []).append(row)
+
+    rental_cards: list[dict[str, Any]] = []
+    for property_type in ["single_family", "semi_detached", "townhouse", "apartment", "condo_apartment"]:
+        rows = grouped_rows.get(property_type) or []
+        if not rows:
+            continue
+        rent_row = next((row for row in rows if row.get("bedroom_count") == 2 and row.get("average_rent_monthly") is not None), None)
+        if rent_row is None:
+            rent_row = next((row for row in rows if row.get("average_rent_monthly") is not None), None)
+        vacancy_row = next((row for row in rows if row.get("bedroom_count") == 2 and row.get("vacancy_rate_percent") is not None), None)
+        if vacancy_row is None:
+            vacancy_row = next((row for row in rows if row.get("bedroom_count") is None and row.get("vacancy_rate_percent") is not None), None)
+        if vacancy_row is None:
+            vacancy_row = next((row for row in rows if row.get("vacancy_rate_percent") is not None), None)
+        if rent_row is None and vacancy_row is None:
+            continue
+        source_row = rent_row or vacancy_row or rows[0]
+        average_rent = rent_row.get("average_rent_monthly") if rent_row else None
+        vacancy_rate = vacancy_row.get("vacancy_rate_percent") if vacancy_row else None
+        bedroom_count = rent_row.get("bedroom_count") if rent_row else None
+        rental_cards.append(
+            {
+                "property_type": property_type,
+                "property_type_label": get_rental_property_type_label(property_type),
+                "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
+                "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
+                "rent_label": f"{bedroom_count}-bedroom rent" if isinstance(bedroom_count, int) else "Average rent",
+                "source_url": source_row.get("source_url"),
+                "source_date": source_row.get("source_date"),
+                "notes": None,
+            }
+        )
+
     market_match = find_market_reference_match(
         {
             "location": market_profile.get("market_name"),
@@ -1750,6 +2125,7 @@ def build_market_housing_summary(
             "available": False,
             "rent_display": "—",
             "vacancy_display": "—",
+            "rental_cards": rental_cards,
             "match_label": "No CMHC match",
             "notes": "No CMHC rental-market baseline is currently available for this market.",
             "source_url": None,
@@ -1760,10 +2136,26 @@ def build_market_housing_summary(
     reference = market_match.get("market_reference") or {}
     average_rent = reference.get("average_rent_monthly")
     vacancy_rate = reference.get("vacancy_rate_percent")
+    if not rental_cards and (average_rent is not None or vacancy_rate is not None):
+        fallback_property_type = reference.get("property_type")
+        fallback_bedroom_count = reference.get("bedroom_count")
+        rental_cards.append(
+            {
+                "property_type": fallback_property_type,
+                "property_type_label": get_rental_property_type_label(fallback_property_type),
+                "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
+                "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
+                "rent_label": f"{fallback_bedroom_count}-bedroom rent" if isinstance(fallback_bedroom_count, int) else "Average rent",
+                "source_url": reference.get("source_url"),
+                "source_date": reference.get("source_date"),
+                "notes": market_match.get("notes"),
+            }
+        )
     return {
         "available": average_rent is not None or vacancy_rate is not None,
         "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
         "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
+        "rental_cards": rental_cards,
         "match_label": f"CMHC {market_match.get('match_type', 'reference').title()}",
         "matched_market_name": market_match.get("matched_market_name"),
         "notes": market_match.get("notes"),

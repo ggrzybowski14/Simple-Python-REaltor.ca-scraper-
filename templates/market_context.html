@@ -12,8 +12,10 @@
       reliably now so the future long-term return layer has a real market context behind it.
     </p>
     <div class="card-actions">
+      {% if saved_search %}
       <a class="button-secondary button-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
       <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to underwriting</a>
+      {% endif %}
     </div>
   </div>
   <div class="hero-metrics">
@@ -41,6 +43,27 @@
     <p class="eyebrow">Housing Fundamentals</p>
     <h2>Rental baseline currently feeding this market context</h2>
   </div>
+  {% if housing_summary.rental_cards %}
+  <div class="market-metric-grid">
+    {% for rental_card in housing_summary.rental_cards %}
+    <article class="metric-card market-metric-card">
+      <span class="metric-label">{{ rental_card.property_type_label }}</span>
+      <strong>{{ rental_card.rent_display }}</strong>
+      <p class="meta-line">{{ rental_card.rent_label }}</p>
+      <p class="meta-line">Vacancy: {{ rental_card.vacancy_display }}</p>
+      {% if rental_card.notes %}
+      <p class="meta-line">{{ rental_card.notes }}</p>
+      {% endif %}
+      {% if rental_card.source_date %}
+      <p class="meta-line">Source date: {{ rental_card.source_date }}</p>
+      {% endif %}
+      {% if rental_card.source_url %}
+      <a class="internal-link" href="{{ rental_card.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
   <div class="market-metric-grid market-metric-grid-two">
     <article class="metric-card market-metric-card">
       <span class="metric-label">Average 2-bedroom rent</span>
@@ -65,47 +88,103 @@
       {% endif %}
     </article>
   </div>
+  {% endif %}
 </section>
 
 <section class="panel market-panel">
   <div class="panel-header">
     <p class="eyebrow">Appreciation</p>
     <h2>{{ appreciation_chart.title }}</h2>
-  </div>
-  {% if appreciation_chart.available %}
-  <div class="appreciation-grid">
-    <div class="metric-card market-metric-card appreciation-summary-card">
-      <span class="metric-label">Total index change</span>
-      <strong>{{ appreciation_chart.total_change_display }}</strong>
-      <p class="meta-line">{{ appreciation_chart.start_label }} to {{ appreciation_chart.end_label }}</p>
-      <p class="meta-line">Index moved from {{ appreciation_chart.start_value }} to {{ appreciation_chart.end_value }}</p>
-      {% if appreciation_chart.source_name %}
-      <p class="meta-line">{{ appreciation_chart.source_name }}{% if appreciation_chart.confidence %} · {{ appreciation_chart.confidence|title }} confidence{% endif %}</p>
-      {% endif %}
-      {% if appreciation_chart.source_url %}
-      <a class="internal-link" href="{{ appreciation_chart.source_url }}" target="_blank" rel="noreferrer">Source</a>
+    {% if appreciation_chart.proxy_available and not appreciation_chart.proxy_active %}
+    <p class="meta-line">No direct CREA HPI market series is available for this market.</p>
+    <div class="card-actions">
+      {% if saved_search %}
+      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
+      {% else %}
+      <a class="button-secondary button-link" href="{{ url_for('market_context_by_key', market_key=market_profile.market_key, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
       {% endif %}
     </div>
-    <div class="metric-card appreciation-chart-card">
-      <svg class="appreciation-chart" viewBox="0 0 760 240" role="img" aria-label="Residential property price index over time">
+    {% endif %}
+  </div>
+  {% set top_metric_cards = appreciation_chart.metric_cards[:4] if appreciation_chart.metric_cards else [] %}
+  {% set side_metric_card = appreciation_chart.metric_cards[4] if appreciation_chart.metric_cards and appreciation_chart.metric_cards|length > 4 else None %}
+  {% if top_metric_cards %}
+  <div class="appreciation-layout-grid">
+    {% for metric in top_metric_cards %}
+    <article class="metric-card market-metric-card appreciation-top-card">
+      <span class="metric-label">{{ metric.label }}</span>
+      <strong>{{ metric.value }}</strong>
+      {% if metric.meta %}
+      <p class="meta-line">{{ metric.meta }}</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+    {% if side_metric_card %}
+    <article class="metric-card market-metric-card appreciation-side-card">
+      <span class="metric-label">{{ side_metric_card.label }}</span>
+      <strong>{{ side_metric_card.value }}</strong>
+      {% if side_metric_card.meta %}
+      <p class="meta-line">{{ side_metric_card.meta }}</p>
+      {% endif %}
+    </article>
+    {% endif %}
+    {% if appreciation_chart.available %}
+    <div class="metric-card appreciation-chart-card appreciation-chart-slot">
+      <svg class="appreciation-chart" viewBox="0 0 {{ appreciation_chart.chart_width|default(760) }} {{ appreciation_chart.chart_height|default(280) }}" role="img" aria-label="Residential property price index over time">
+        {% if appreciation_chart.plot_left is defined and appreciation_chart.y_axis_label is defined %}
+        <text class="appreciation-axis-title" transform="translate(42 {{ ((appreciation_chart.plot_top + appreciation_chart.plot_bottom) / 2)|round(1) }}) rotate(-90)">{{ appreciation_chart.y_axis_label }}</text>
+        {% endif %}
+        {% for tick in appreciation_chart.y_axis_ticks|default([]) %}
+        <line class="appreciation-gridline" x1="{{ appreciation_chart.plot_left|default(64) }}" y1="{{ tick.y }}" x2="{{ tick.line_x2 }}" y2="{{ tick.y }}"></line>
+        <text class="appreciation-y-label" x="{{ (appreciation_chart.plot_left|default(64)) - 8 }}" y="{{ tick.y + 4 }}">{{ tick.label }}</text>
+        {% endfor %}
+        {% if appreciation_chart.plot_left is defined %}
+        <line class="appreciation-axis-line" x1="{{ appreciation_chart.plot_left }}" y1="{{ appreciation_chart.plot_top }}" x2="{{ appreciation_chart.plot_left }}" y2="{{ appreciation_chart.plot_bottom }}"></line>
+        <line class="appreciation-axis-line" x1="{{ appreciation_chart.plot_left }}" y1="{{ appreciation_chart.plot_bottom }}" x2="{{ appreciation_chart.plot_right }}" y2="{{ appreciation_chart.plot_bottom }}"></line>
+        {% endif %}
         <polyline class="appreciation-line" fill="none" points="{{ appreciation_chart.chart_path }}"></polyline>
         {% for point in appreciation_chart.series_points %}
         <circle class="appreciation-point" cx="{{ point.x }}" cy="{{ point.y }}" r="4"></circle>
         {% endfor %}
+        {% for tick in appreciation_chart.x_axis_ticks|default([]) %}
+        <line class="appreciation-axis-tick" x1="{{ tick.x }}" y1="{{ tick.y }}" x2="{{ tick.x }}" y2="{{ tick.y + 6 }}"></line>
+        <text class="appreciation-x-label" x="{{ tick.x }}" y="{{ tick.y + 22 }}">{{ tick.label }}</text>
+        {% endfor %}
+        {% if appreciation_chart.plot_left is defined and appreciation_chart.chart_height is defined %}
+        <text class="appreciation-axis-title appreciation-axis-title-x" x="{{ ((appreciation_chart.plot_left + appreciation_chart.plot_right) / 2)|round(1) }}" y="{{ appreciation_chart.chart_height - 4 }}">Date</text>
+        {% endif %}
       </svg>
-      <div class="appreciation-axis">
-        <span>{{ appreciation_chart.start_label }}</span>
-        <span>{{ appreciation_chart.end_label }}</span>
+      {% if appreciation_chart.source_url %}
+      <div class="panel-header">
+        <a class="internal-link" href="{{ appreciation_chart.source_url }}" target="_blank" rel="noreferrer">Source</a>
       </div>
+      {% endif %}
     </div>
-  </div>
-  {% else %}
-  <div class="metric-card market-metric-card appreciation-empty-card">
+    {% else %}
+    <div class="metric-card market-metric-card appreciation-empty-card appreciation-chart-slot">
     <span class="metric-label">Not available yet</span>
     <strong>Series pending</strong>
     <p class="meta-line">{{ appreciation_chart.empty_message }}</p>
     {% if appreciation_chart.notes %}
     <p class="meta-line">{{ appreciation_chart.notes }}</p>
+    {% endif %}
+    {% if appreciation_chart.ai_estimate_available %}
+    <p class="meta-line">AI fallback can be added later as a user-triggered estimate path, but it is not active in this market page yet.</p>
+    {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="panel-header">
+    {% if appreciation_chart.source_name %}
+    <p class="meta-line">
+      {{ appreciation_chart.source_name }}
+      {% if appreciation_chart.proxy_active %}
+      <span class="proxy-warning"> · {{ appreciation_chart.proxy_label }} · Low confidence</span>
+      {% endif %}
+    </p>
+    {% endif %}
+    {% if appreciation_chart.proxy_active and appreciation_chart.benchmark_explainer %}
+    <p class="meta-line">{{ appreciation_chart.benchmark_explainer }}</p>
     {% endif %}
   </div>
   {% endif %}
@@ -165,8 +244,8 @@
       <h2>What is intentionally not populated yet</h2>
     </div>
     <p class="meta-line">
-      Appreciation history, rent growth assumptions, and AI-enriched market narrative are not seeded in this first pass.
-      The schema now leaves room for those layers without pretending the data is already reliable.
+      Rent growth assumptions and AI-enriched market narrative are not seeded in this pass. The market page now leaves room
+      for official appreciation where available without pretending unsupported markets have equivalent coverage.
     </p>
     {% if market_profile.notes %}
     <p class="meta-line">{{ market_profile.notes }}</p>

@@ -43,6 +43,35 @@ KNOWN_BC_LOCATIONS = {
     "west kelowna",
 }
 
+VANCOUVER_ISLAND_PROXY_MARKETS = {
+    "duncan_bc",
+    "nanaimo_bc",
+    "sidney_bc",
+}
+
+RENTAL_PROPERTY_TYPE_LABELS = {
+    "apartment": "Apartment",
+    "condo_apartment": "Condo apartment",
+    "single_family": "Single-family house",
+    "semi_detached": "Semi-detached / duplex",
+    "townhouse": "Townhouse",
+}
+
+PROPERTY_TYPE_MATCH_RULES = {
+    "apartment": {
+        "preferred": ["apartment", "condo_apartment"],
+        "acceptable": {"apartment", "condo_apartment"},
+    },
+    "condo": {
+        "preferred": ["condo_apartment", "apartment"],
+        "acceptable": {"condo_apartment", "apartment"},
+    },
+    "house": {
+        "preferred": ["single_family", "semi_detached", "townhouse", "apartment"],
+        "acceptable": {"single_family", "semi_detached", "townhouse"},
+    },
+}
+
 
 def normalize_market_key(location: str | None, province: str | None = None) -> str:
     location_part = re.sub(r"[^a-z0-9]+", "_", (location or "").strip().lower()).strip("_")
@@ -77,6 +106,28 @@ def infer_province(saved_search: dict[str, Any]) -> str | None:
     if candidate_tokens & KNOWN_BC_LOCATIONS:
         return "BC"
     return None
+
+
+def get_appreciation_proxy_market(market_key: str) -> dict[str, str] | None:
+    if market_key not in VANCOUVER_ISLAND_PROXY_MARKETS:
+        return None
+    return {
+        "proxy_key": "vancouver_island_bc",
+        "proxy_name": "Vancouver Island",
+        "label": "Vancouver Island proxy",
+        "confidence": "low",
+        "notes": "This market does not have direct CREA HPI coverage, so the Vancouver Island CREA series is being used as an explicit proxy after user acceptance.",
+    }
+
+
+def get_rental_property_type_label(property_type: str | None) -> str:
+    normalized = (property_type or "").strip().lower()
+    return RENTAL_PROPERTY_TYPE_LABELS.get(normalized, normalized.replace("_", " ").title() or "Unknown")
+
+
+def get_property_type_match_rule(property_type: str | None) -> dict[str, Any]:
+    normalized = (property_type or "").strip().lower()
+    return PROPERTY_TYPE_MATCH_RULES.get(normalized, {"preferred": [normalized] if normalized else [], "acceptable": {normalized} if normalized else set()})
 
 
 def build_market_profile_from_saved_search(
@@ -114,13 +165,22 @@ def find_market_reference_match(
     target_market_key = normalize_market_key(location, province)
     property_type = (saved_search.get("property_type") or "").strip().lower() or None
     beds_min = saved_search.get("beds_min")
+    property_type_rule = get_property_type_match_rule(property_type)
+    property_type_preference = property_type_rule["preferred"]
+    acceptable_property_types = property_type_rule["acceptable"]
 
     def row_score(row: dict[str, Any]) -> tuple[int, int]:
         score = 0
+        row_property_type = (row.get("property_type") or "").strip().lower()
         if row.get("market_key") == target_market_key:
             score += 100
-        if property_type and (row.get("property_type") or "").strip().lower() == property_type:
-            score += 10
+        if property_type and row_property_type:
+            if row_property_type in property_type_preference:
+                score += 20 - (property_type_preference.index(row_property_type) * 4)
+            elif row_property_type in acceptable_property_types:
+                score += 6
+            else:
+                score -= 2
         if isinstance(beds_min, int) and row.get("bedroom_count") == beds_min:
             score += 5
         return (score, int(row.get("id") or 0))
@@ -128,10 +188,11 @@ def find_market_reference_match(
     exact_candidates = [row for row in market_rows if row.get("market_key") == target_market_key]
     if exact_candidates:
         best = sorted(exact_candidates, key=row_score, reverse=True)[0]
+        best_property_type = (best.get("property_type") or "").strip().lower()
         property_type_mismatch = bool(
             property_type
-            and best.get("property_type")
-            and (best.get("property_type") or "").strip().lower() != property_type
+            and best_property_type
+            and best_property_type not in acceptable_property_types
         )
         return {
             "match_type": "exact",
@@ -151,10 +212,11 @@ def find_market_reference_match(
         proxy_candidates = [row for row in market_rows if row.get("market_key") == proxy["proxy_market_key"]]
         if proxy_candidates:
             best = sorted(proxy_candidates, key=row_score, reverse=True)[0]
+            best_property_type = (best.get("property_type") or "").strip().lower()
             property_type_mismatch = bool(
                 property_type
-                and best.get("property_type")
-                and (best.get("property_type") or "").strip().lower() != property_type
+                and best_property_type
+                and best_property_type not in acceptable_property_types
             )
             return {
                 "match_type": "proxy",

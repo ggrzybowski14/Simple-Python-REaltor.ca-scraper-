@@ -392,8 +392,8 @@ This gives the project:
 
 The next session should focus on two narrow follow-ups:
 
-- light presentation polish for the appreciation block and market-page copy
-- deciding the next appreciation-source path for smaller markets that are not covered by the current Statistics Canada series
+- auditing CMHC secondary-rental tables for usable detached-house and semi-detached BC coverage
+- continuing the market-page expansion where official data is already publishable, especially broader BC CMHC rental coverage and CREA-backed appreciation
 
 Concrete next step:
 
@@ -401,7 +401,9 @@ Concrete next step:
 - keep `Vacancy %` tied to market stats plus manual editing rather than adding an AI path
 - improve how the underwriting table surfaces that a row is using smart maintenance or smart CapEx
 - keep full reasoning and detailed override context on listing detail rather than bloating the analyzer table
-- continue expanding the BC StatCan market-metrics coverage and add the next structured import path for appreciation where an official series exists
+- continue expanding the BC StatCan market-metrics coverage
+- keep the CMHC rental importer focused on categories with clean published values now: `apartment`, `townhouse`, and `condo_apartment`
+- treat `single_family` detached rent as an explicit data gap until the CMHC secondary-rental audit proves usable published values
 
 Important product rule:
 

@@ -26,7 +26,10 @@ Current prototype state:
 - Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
 - First structured market layer working: `population`, `population growth`, `unemployment`, and `median household income` can now be stored per market and rendered on the website
 - Broader BC structured market coverage working: a bulk StatCan import path can now load those four structured metrics for matched BC markets instead of keeping the market layer limited to hand-seeded examples
-- First appreciation layer working: Victoria can now show a seeded Statistics Canada RPPI appreciation series, while markets without a matched official series fall back to an explicit empty state
+- CREA HPI appreciation layer working: official CREA MLS HPI data is now ingested into Supabase and rendered on market pages with benchmark-price history plus 1M, 12M, 5Y, and 10Y metrics
+- Vancouver Island appreciation proxy working: Duncan, Sidney, and Nanaimo can now use an explicit opt-in Vancouver Island proxy path with clear low-confidence labeling
+- Broader BC CMHC rental coverage working: CMHC market rental workbooks now feed apartment, townhouse, and condo-apartment rental cards for CMHC-covered BC markets like Victoria, Vancouver, Kelowna, Nanaimo, Kamloops, and Chilliwack
+- Detached-house rental gap documented: CMHC detached and semi-detached BC coverage is still too incomplete or suppressed to present as a reliable single-family baseline yet
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
 - Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
 - Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
@@ -34,7 +37,7 @@ Current prototype state:
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
-- Current active step: start expanding the market context layer, especially appreciation coverage and the next market-level data sources
+- Current active step: audit CMHC secondary-rental tables for usable detached-house coverage and keep expanding the market context layer where official data is publishable
 - Current UI priority: keep improving clarity in the underwriting workflow rather than broadening the scraper again immediately
 
 ## What It Does Today
@@ -188,7 +191,7 @@ Notes:
 - The script still saves local JSON output even when Supabase writes are enabled.
 - If you want to disable database writes for a specific run, use `--no-supabase`.
 - The Supabase schema now stores saved searches, scrape runs, canonical listings, run-to-listing history, saved-search lifecycle state, underwriting defaults, listing overrides, CMHC market reference rows, AI suggestion history, and first-pass market context tables separately.
-- CMHC import currently parses the BC rental-market workbook and loads apartment-based market rent and vacancy rows into `market_reference_data`.
+- CMHC import currently parses the BC rental-market workbook for apartment baselines, and the repo now also includes a market-workbook parser for `townhouse` and `condo_apartment` rows where CMHC publishes them cleanly.
 - First-pass market context seeding now uses:
   - [supabase/market_context_seed.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/market_context_seed.sql:1)
   - [scripts/seed_market_context.py](/Users/georgia/Projects/simple realtor.ca scraper python/scripts/seed_market_context.py:1)
@@ -306,7 +309,7 @@ Current website limitations:
 - site result counts can still fluctuate while Realtor.ca settles
 - `Vacancy %` is intentionally not AI-driven right now; it should come from market stats such as CMHC when available and remain user-editable
 - underwriting source-mode UI still needs another polish pass so smart overrides and active modes are more obvious
-- CMHC rent data is currently apartment-oriented, so house searches can still require manual or AI adjustment
+- CMHC rent data is still incomplete for detached-house coverage in BC, so house searches can still require manual or AI adjustment even after the new townhouse / condo groundwork
 - utilities and insurance rule-based estimates are BC-wide heuristics, not market-specific estimates
 - smart maintenance and smart CapEx are heuristic listing-level overrides, not full asset-condition models
 
