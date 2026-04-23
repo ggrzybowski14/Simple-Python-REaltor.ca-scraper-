@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import app as webapp
+from werkzeug.datastructures import MultiDict
 
 
 def test_build_buy_box_criteria_uses_saved_settings_when_query_not_applied() -> None:
@@ -91,3 +92,31 @@ def test_build_buy_box_result_lookup_returns_bucket_labels() -> None:
     assert lookup[2]["bucket"] == "unmatched"
     assert lookup[2]["label"] == "Unmatched"
 
+
+def test_build_scrape_args_omits_zero_beds_filter() -> None:
+    args = webapp.build_scrape_args(
+        MultiDict(
+            {
+                "location": "Sidney",
+                "beds_min": "0",
+                "max_pages": "3",
+                "max_listings": "25",
+                "detail_limit": "25",
+                "detail_concurrency": "2",
+            }
+        )
+    )
+
+    assert "--beds-min" not in args
+
+
+def test_build_scrape_args_from_saved_search_omits_zero_beds_filter() -> None:
+    args = webapp.build_scrape_args_from_saved_search(
+        {
+            "location": "Sidney",
+            "beds_min": 0,
+            "max_price": 750000,
+        }
+    )
+
+    assert "--beds-min" not in args

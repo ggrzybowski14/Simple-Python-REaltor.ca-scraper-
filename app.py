@@ -27,7 +27,9 @@ from investment import (
     merge_investment_defaults,
 )
 from market_data import (
+    build_market_profile_from_saved_search,
     find_market_reference_match,
+    get_market_seed_bootstrap_payload,
     hydrate_defaults_with_market_data,
     infer_province,
     normalize_market_key,
@@ -61,10 +63,10 @@ class SupabaseReadConfig:
     key: str
 
 
-def parse_optional_int(value: str | None) -> int | None:
+def parse_optional_int(value: Any) -> int | None:
     if value is None:
         return None
-    cleaned = value.strip()
+    cleaned = str(value).strip()
     if not cleaned:
         return None
     try:
@@ -110,16 +112,76 @@ def humanize_market_name(value: str | None) -> str:
 
 
 def derive_market_profile_from_saved_search(saved_search: dict[str, Any]) -> dict[str, Any]:
-    location = humanize_market_name(saved_search.get("location"))
-    province = infer_province(saved_search)
-    return {
-        "market_key": normalize_market_key(location, province),
-        "market_name": location,
-        "province": province,
-        "geography_type": "market",
-        "status": "placeholder",
-        "notes": None,
-    }
+    return build_market_profile_from_saved_search(saved_search, status="placeholder", notes=None)
+
+
+def ensure_market_profile(config: SupabaseReadConfig, saved_search: dict[str, Any]) -> dict[str, Any]:
+    profile = build_market_profile_from_saved_search(
+        saved_search,
+        status="discovered",
+        notes=(
+            "Auto-created from a scraped saved search. Structured metrics, rent growth, and appreciation "
+            "series can be populated later as market-context coverage expands."
+        ),
+    )
+    try:
+        result = supabase_post(
+            config,
+            "market_profiles",
+            query={"on_conflict": "market_key"},
+            payload=[profile],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+    except RuntimeError:
+        return profile
+    if isinstance(result, list) and result:
+        persisted = result[0]
+    else:
+        persisted = profile
+    return bootstrap_market_context(config, saved_search, fallback_profile=persisted)
+
+
+def bootstrap_market_context(
+    config: SupabaseReadConfig,
+    saved_search: dict[str, Any],
+    *,
+    fallback_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bundle = get_market_seed_bootstrap_payload(saved_search)
+    if bundle is None:
+        return fallback_profile or build_market_profile_from_saved_search(saved_search, status="discovered", notes=None)
+
+    profile_payload = bundle["profile"]
+    try:
+        profile_result = supabase_post(
+            config,
+            "market_profiles",
+            query={"on_conflict": "market_key"},
+            payload=[profile_payload],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        if bundle["metrics"]:
+            supabase_post(
+                config,
+                "market_metrics",
+                query={"on_conflict": "market_key,metric_key"},
+                payload=bundle["metrics"],
+                prefer="resolution=merge-duplicates,return=representation",
+            )
+        if bundle["series"]:
+            supabase_post(
+                config,
+                "market_metric_series",
+                query={"on_conflict": "market_key,series_key,point_date"},
+                payload=bundle["series"],
+                prefer="resolution=merge-duplicates,return=representation",
+            )
+    except RuntimeError:
+        return fallback_profile or profile_payload
+
+    if isinstance(profile_result, list) and profile_result:
+        return profile_result[0]
+    return profile_payload
 
 
 def build_market_index(
@@ -133,7 +195,10 @@ def build_market_index(
         market = markets_by_key.get(market_key)
         if market is None:
             persisted_profile = fetch_market_profile(config, market_key)
-            market = persisted_profile or derived_profile
+            if persisted_profile and persisted_profile.get("status") == "discovered":
+                market = bootstrap_market_context(config, search, fallback_profile=persisted_profile)
+            else:
+                market = persisted_profile or ensure_market_profile(config, search)
             market = {
                 **market,
                 "saved_searches": [],
@@ -627,6 +692,11 @@ def create_app() -> Flask:
         config = get_supabase_read_config()
         saved_searches = fetch_saved_searches(config)
         recent_runs = fetch_recent_runs(config)
+        local_jobs = list_scrape_jobs()
+        started_job = None
+        started_job_id = (flask_request.args.get("started") or "").strip()
+        if started_job_id:
+            started_job = get_scrape_job(started_job_id)
         latest_run = recent_runs[0] if recent_runs else None
         runs_by_saved_search = {}
         for run in recent_runs:
@@ -642,6 +712,8 @@ def create_app() -> Flask:
             "dashboard.html",
             saved_searches=saved_searches,
             recent_runs=recent_runs,
+            local_jobs=local_jobs,
+            started_job=started_job,
             analyzed_markets=analyzed_markets,
             property_type_options=PROPERTY_TYPE_OPTIONS,
         )
@@ -657,9 +729,13 @@ def create_app() -> Flask:
         market_profile = fetch_market_profile(config, market_key)
         if market_profile is None and not matching_saved_searches:
             abort(404)
+        representative_saved_search = matching_saved_searches[0] if matching_saved_searches else None
+        if market_profile is None and representative_saved_search:
+            market_profile = ensure_market_profile(config, representative_saved_search)
+        elif market_profile is not None and representative_saved_search and market_profile.get("status") == "discovered":
+            market_profile = bootstrap_market_context(config, representative_saved_search, fallback_profile=market_profile)
         if market_profile is None and matching_saved_searches:
             market_profile = derive_market_profile_from_saved_search(matching_saved_searches[0])
-        representative_saved_search = matching_saved_searches[0] if matching_saved_searches else None
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
         appreciation_chart = build_appreciation_chart(
@@ -717,7 +793,11 @@ def create_app() -> Flask:
         if saved_search is None:
             abort(404)
         derived_profile = derive_market_profile_from_saved_search(saved_search)
-        market_profile = fetch_market_profile(config, derived_profile["market_key"]) or derived_profile
+        market_profile = fetch_market_profile(config, derived_profile["market_key"])
+        if market_profile is None:
+            market_profile = ensure_market_profile(config, saved_search)
+        elif market_profile.get("status") == "discovered":
+            market_profile = bootstrap_market_context(config, saved_search, fallback_profile=market_profile)
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
         appreciation_chart = build_appreciation_chart(
@@ -2057,8 +2137,10 @@ def build_scrape_args(form_data) -> list[str]:
         if cleaned:
             args.extend([flag, cleaned])
 
+    beds_min = parse_optional_int(form_data.get("beds_min"))
     append_value("--location", form_data.get("location"))
-    append_value("--beds-min", form_data.get("beds_min"))
+    if beds_min is not None and beds_min > 0:
+        append_value("--beds-min", str(beds_min))
     append_value("--property-type", form_data.get("property_type"))
     append_value("--min-price", form_data.get("min_price"))
     append_value("--max-price", form_data.get("max_price"))
@@ -2079,8 +2161,10 @@ def build_scrape_args_from_saved_search(saved_search: dict[str, Any]) -> list[st
         if cleaned:
             args.extend([flag, cleaned])
 
+    beds_min = parse_optional_int(saved_search.get("beds_min"))
     append_value("--location", saved_search.get("location"))
-    append_value("--beds-min", saved_search.get("beds_min"))
+    if beds_min is not None and beds_min > 0:
+        append_value("--beds-min", str(beds_min))
     append_value("--property-type", saved_search.get("property_type"))
     append_value("--min-price", saved_search.get("min_price"))
     append_value("--max-price", saved_search.get("max_price"))

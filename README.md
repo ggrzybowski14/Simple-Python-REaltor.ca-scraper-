@@ -25,6 +25,7 @@ Current prototype state:
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
 - Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
 - First structured market layer working: `population`, `population growth`, `unemployment`, and `median household income` can now be stored per market and rendered on the website
+- Broader BC structured market coverage working: a bulk StatCan import path can now load those four structured metrics for matched BC markets instead of keeping the market layer limited to hand-seeded examples
 - First appreciation layer working: Victoria can now show a seeded Statistics Canada RPPI appreciation series, while markets without a matched official series fall back to an explicit empty state
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
 - Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
@@ -69,6 +70,7 @@ Current prototype state:
   - CMHC rent and vacancy where available
   - seeded structured market metrics
   - seeded appreciation history where an official series exists
+- Supports a bulk StatCan market-metrics import workflow so matched BC markets can auto-fill `population`, `population growth`, `unemployment`, and `median household income`
 
 ## What It Is Not Yet
 
@@ -126,6 +128,9 @@ python app.py
 python3 scripts/import_cmhc_market_data.py \
   "/Users/georgia/Documents/rmr-british-columbia-2025-en.xlsx" \
   --source-url "https://www.cmhc-schl.gc.ca/professionals/housing-markets-data-and-research/housing-data/data-tables/rental-market/rental-market-report-data-tables"
+
+# bulk import Statistics Canada market metrics from a CSV file
+python3 scripts/import_statcan_market_metrics.py
 ```
 
 Then open `http://127.0.0.1:5000` unless you are using a different local port during development.
@@ -187,6 +192,10 @@ Notes:
 - First-pass market context seeding now uses:
   - [supabase/market_context_seed.sql](/Users/georgia/Projects/simple realtor.ca scraper python/supabase/market_context_seed.sql:1)
   - [scripts/seed_market_context.py](/Users/georgia/Projects/simple realtor.ca scraper python/scripts/seed_market_context.py:1)
+- Bulk StatCan market-metrics import now uses:
+  - [data/statcan_bc_market_metrics.csv](/Users/georgia/Projects/simple realtor.ca scraper python/data/statcan_bc_market_metrics.csv:1)
+  - [scripts/generate_statcan_bc_market_metrics_csv.py](/Users/georgia/Projects/simple realtor.ca scraper python/scripts/generate_statcan_bc_market_metrics_csv.py:1)
+  - [scripts/import_statcan_market_metrics.py](/Users/georgia/Projects/simple realtor.ca scraper python/scripts/import_statcan_market_metrics.py:1)
 
 ## Current Integrated Flow
 
@@ -444,6 +453,9 @@ What is working now:
   - `median household income`
 - Victoria now has a seeded Statistics Canada RPPI appreciation series in `market_metric_series`
 - Duncan intentionally does not yet have a matched appreciation series, so the page shows a clean empty state instead of proxying bad data
+- newly discovered markets now persist into `market_profiles` automatically with normalized keys such as `sidney_bc`
+- matched BC markets can now pick up bulk-imported StatCan metrics through `market_metrics`
+- CMHC-backed rental fundamentals still depend on matching rows in `market_reference_data`, so markets like Sidney can now show structured metrics while still correctly showing no exact CMHC rent baseline
 
 What is intentionally not finished yet:
 
@@ -484,10 +496,11 @@ The next practical product and engineering steps are:
 3. add the next market-context fields selectively rather than all at once:
    - likely `rent growth`
    - then selective market narrative / economic-driver fields
-4. keep improving underwriting workflow clarity in parallel:
+4. expand the bulk StatCan BC market CSV and generator coverage further, especially for markets that appear in `market_reference_data` but do not yet match cleanly
+5. keep improving underwriting workflow clarity in parallel:
    - source-mode readability
    - shortlist / ignore / notes style review workflow
-5. only after that, revisit wiring market context into longer-term return projections
+6. only after that, revisit wiring market context into longer-term return projections
 
 ## Push State
 

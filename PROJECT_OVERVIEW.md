@@ -38,6 +38,8 @@ The codebase now also has the first real market-context layer:
 - seeded Duncan and Victoria market stats
 - seeded Victoria appreciation history from Statistics Canada RPPI
 - explicit empty-state behavior for markets without a matched appreciation series yet
+- automatic market-profile bootstrap for newly discovered scraped markets
+- a bulk StatCan import path for the core structured market metrics used by the current market page
 
 This is still an early application, not a polished product, but it is already beyond pure scraping validation.
 
@@ -206,6 +208,15 @@ Current live market-context coverage:
 - `Duncan`
   - CMHC housing fundamentals
   - seeded Statistics Canada market stats
+  - no appreciation series yet
+- `Sidney`
+  - auto-created discovered market profile
+  - Statistics Canada structured market stats imported
+  - no exact CMHC housing fundamentals yet
+  - no appreciation series yet
+- `Vancouver`
+  - CMHC housing fundamentals
+  - Statistics Canada structured market stats imported
   - no appreciation series yet
 - `Victoria`
   - CMHC housing fundamentals
@@ -390,6 +401,7 @@ Concrete next step:
 - keep `Vacancy %` tied to market stats plus manual editing rather than adding an AI path
 - improve how the underwriting table surfaces that a row is using smart maintenance or smart CapEx
 - keep full reasoning and detailed override context on listing detail rather than bloating the analyzer table
+- continue expanding the BC StatCan market-metrics coverage and add the next structured import path for appreciation where an official series exists
 
 Important product rule:
 

@@ -12,6 +12,9 @@ from urllib import error, parse, request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from market_data import build_market_profile_from_saved_search
+from market_data import get_market_seed_bootstrap_payload
 from typing import Any
 
 from playwright.async_api import BrowserContext, Error, Page, TimeoutError, async_playwright
@@ -567,7 +570,7 @@ async def apply_search_criteria(page: Page, criteria: SearchCriteria) -> None:
         logging.info("Applying maximum price filter: %s", criteria.max_price)
         await apply_top_select_filter(page, "#ddlMaxPriceTop", label=format_price_option(criteria.max_price))
 
-    if criteria.beds_min is not None:
+    if criteria.beds_min is not None and criteria.beds_min > 0:
         logging.info("Applying minimum beds filter: %s+", criteria.beds_min)
         await apply_top_select_filter(page, "#ddlBedsTop", label=format_beds_option(criteria.beds_min))
 
@@ -1120,7 +1123,77 @@ def ensure_saved_search(config: SupabaseConfig, payload: dict[str, Any], scraped
     )
     if not isinstance(result, list) or not result:
         raise RuntimeError("Supabase did not return a saved_searches row")
+    ensure_market_profile(
+        config,
+        {
+            **row,
+            "id": result[0].get("id"),
+        },
+    )
     return result[0]
+
+
+def ensure_market_profile(config: SupabaseConfig, saved_search: dict[str, Any]) -> dict[str, Any] | None:
+    profile = build_market_profile_from_saved_search(
+        saved_search,
+        status="discovered",
+        notes=(
+            "Auto-created from a scraped saved search. Structured metrics, rent growth, and appreciation "
+            "series can be populated later as market-context coverage expands."
+        ),
+    )
+    result = supabase_request(
+        config,
+        "market_profiles",
+        method="POST",
+        query={"on_conflict": "market_key", "select": "id,market_key,market_name,province,status"},
+        payload=[profile],
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    persisted = result[0] if isinstance(result, list) and result else None
+    return bootstrap_market_context(config, saved_search, fallback_profile=persisted)
+
+
+def bootstrap_market_context(
+    config: SupabaseConfig,
+    saved_search: dict[str, Any],
+    *,
+    fallback_profile: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    bundle = get_market_seed_bootstrap_payload(saved_search)
+    if bundle is None:
+        return fallback_profile
+
+    profile_result = supabase_request(
+        config,
+        "market_profiles",
+        method="POST",
+        query={"on_conflict": "market_key", "select": "id,market_key,market_name,province,status"},
+        payload=[bundle["profile"]],
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    if bundle["metrics"]:
+        supabase_request(
+            config,
+            "market_metrics",
+            method="POST",
+            query={"on_conflict": "market_key,metric_key"},
+            payload=bundle["metrics"],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+    if bundle["series"]:
+        supabase_request(
+            config,
+            "market_metric_series",
+            method="POST",
+            query={"on_conflict": "market_key,series_key,point_date"},
+            payload=bundle["series"],
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+
+    if isinstance(profile_result, list) and profile_result:
+        return profile_result[0]
+    return fallback_profile
 
 
 def fetch_existing_saved_search(config: SupabaseConfig, search_key: str) -> dict[str, Any] | None:

@@ -192,6 +192,9 @@
         <div class="table-subline">
           {{ assumption.source|replace('_', ' ')|title }} | {{ assumption.confidence|title }} confidence
         </div>
+        {% if assumption.help_text %}
+        <div class="table-subline">{{ assumption.help_text }}</div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>

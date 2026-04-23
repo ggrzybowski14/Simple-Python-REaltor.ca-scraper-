@@ -244,6 +244,131 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
     assert "123 Example St" in body
 
 
+def test_dashboard_renders_local_background_jobs(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(webapp, "fetch_saved_searches", lambda config: [])
+    monkeypatch.setattr(webapp, "fetch_recent_runs", lambda config, saved_search_id=None: [])
+    monkeypatch.setattr(webapp, "build_market_index", lambda config, saved_searches: [])
+    monkeypatch.setattr(
+        webapp,
+        "list_scrape_jobs",
+        lambda: [
+            {
+                "id": "job123",
+                "status": "failed",
+                "return_code": 1,
+                "started_at": "2026-04-22T20:34:09Z",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        webapp,
+        "get_scrape_job",
+        lambda job_id: {
+            "id": job_id,
+            "status": "failed",
+            "return_code": 1,
+            "started_at": "2026-04-22T20:34:09Z",
+        },
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/?started=job123")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Background job job123" in body
+    assert "Background job history" in body
+    assert "Open local job log" in body
+
+
+def test_listing_detail_renders_smart_reserve_reasoning(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Sidney Houses",
+            "location": "Sidney",
+            "property_type": "house",
+            "beds_min": 3,
+            "search_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_active_listing_detail",
+        lambda config, saved_search_id, listing_id: {
+            "listing_id": listing_id,
+            "address": "123 Example St",
+            "price": "$500,000",
+            "bedrooms": 3,
+            "bathrooms": 2,
+            "property_type": "house",
+            "building_type": "House",
+            "annual_taxes": "$3,600",
+            "hoa_fees": "$0",
+            "listing_description": "Updated home with recent renovations.",
+            "last_seen_at": "2026-04-22T20:00:00Z",
+            "source_listing_key": "abc123",
+            "url": "https://example.com/listing",
+        },
+    )
+    monkeypatch.setattr(webapp, "build_buy_box_criteria", lambda args, saved_search: {})
+    monkeypatch.setattr(webapp, "analyze_listing_for_detail", lambda listing, buy_box: None)
+    monkeypatch.setattr(
+        webapp,
+        "hydrate_defaults_for_saved_search",
+        lambda config, saved_search: (
+            {
+                **webapp.merge_investment_defaults(
+                    {
+                        "market_rent_monthly": {"value": 2800},
+                    }
+                ),
+            },
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_listing_investment_overrides",
+        lambda config, saved_search_id, listing_ids: {
+            listing_ids[0]: {
+                "maintenance_percent_of_rent": 8.0,
+                "maintenance_percent_source": "smart_listing_estimate",
+                "maintenance_percent_confidence": "medium",
+                "maintenance_percent_help_text": "Smart listing estimate based on older property vintage, single-family profile.",
+                "capex_percent_of_rent": 10.0,
+                "capex_percent_source": "smart_listing_estimate",
+                "capex_percent_confidence": "medium",
+                "capex_percent_help_text": "Smart listing estimate based on older property vintage, single-family profile.",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_latest_ai_underwriting_suggestion",
+        lambda config, saved_search_id, listing_id, suggestion_type: None,
+    )
+
+    client = webapp.app.test_client()
+    response = client.get("/saved-searches/7/listings/101")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Smart listing estimate based on older property vintage, single-family profile." in body
+
+
 def test_use_cmhc_vacancy_default_persists_updated_value(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(

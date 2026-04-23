@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from investment import merge_investment_defaults
-from market_data import find_market_reference_match, hydrate_defaults_with_market_data
+from market_data import (
+    build_market_profile_from_saved_search,
+    find_market_reference_match,
+    get_market_seed_bootstrap_payload,
+    hydrate_defaults_with_market_data,
+    infer_province,
+)
 
 
 def test_find_market_reference_match_prefers_exact_market_and_matching_shape() -> None:
@@ -86,3 +92,46 @@ def test_hydrate_defaults_with_market_data_sets_missing_rent_and_vacancy() -> No
     assert hydrated["vacancy_percent"]["value"] == 3.2
     assert hydrated["vacancy_percent"]["source"] == "cmhc_exact"
 
+
+def test_infer_province_recognizes_sidney_as_bc() -> None:
+    assert infer_province({"location": "Sidney"}) == "BC"
+
+
+def test_build_market_profile_from_saved_search_creates_bc_market_key() -> None:
+    profile = build_market_profile_from_saved_search({"location": "Sidney"}, status="discovered")
+
+    assert profile["market_key"] == "sidney_bc"
+    assert profile["province"] == "BC"
+    assert profile["status"] == "discovered"
+
+
+def test_get_market_seed_bootstrap_payload_returns_seed_bundle_for_victoria() -> None:
+    bundle = get_market_seed_bootstrap_payload({"location": "Victoria"})
+
+    assert bundle is not None
+    assert bundle["profile"]["market_key"] == "victoria_bc"
+    assert len(bundle["metrics"]) == 4
+    assert len(bundle["series"]) >= 2
+
+
+def test_get_market_seed_bootstrap_payload_returns_none_for_unknown_market() -> None:
+    bundle = get_market_seed_bootstrap_payload({"location": "Kelowna"})
+
+    assert bundle is None
+
+
+def test_get_market_seed_bootstrap_payload_returns_seed_bundle_for_vancouver() -> None:
+    bundle = get_market_seed_bootstrap_payload({"location": "Vancouver"})
+
+    assert bundle is not None
+    assert bundle["profile"]["market_key"] == "vancouver_bc"
+    assert len(bundle["metrics"]) == 4
+
+
+def test_get_market_seed_bootstrap_payload_returns_seed_bundle_for_sidney() -> None:
+    bundle = get_market_seed_bootstrap_payload({"location": "Sidney"})
+
+    assert bundle is not None
+    assert bundle["profile"]["market_key"] == "sidney_bc"
+    assert len(bundle["metrics"]) == 4
+    assert bundle["series"] == []

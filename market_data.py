@@ -4,6 +4,8 @@ import re
 from copy import deepcopy
 from typing import Any
 
+from market_seed_data import get_market_seed_bundle
+
 
 PROXY_MARKET_BY_LOCATION = {
     "duncan": {
@@ -12,6 +14,33 @@ PROXY_MARKET_BY_LOCATION = {
         "confidence": "low",
         "notes": "Duncan currently falls back to Victoria as an explicit proxy market for CMHC-style defaults.",
     }
+}
+
+KNOWN_BC_LOCATIONS = {
+    "burnaby",
+    "campbell river",
+    "central saanich",
+    "chilliwack",
+    "colwood",
+    "comox",
+    "courtenay",
+    "duncan",
+    "esquimalt",
+    "langford",
+    "maple ridge",
+    "nanaimo",
+    "north saanich",
+    "parksville",
+    "penticton",
+    "port alberni",
+    "richmond",
+    "saanich",
+    "sidney",
+    "surrey",
+    "victoria",
+    "vancouver",
+    "vernon",
+    "west kelowna",
 }
 
 
@@ -24,10 +53,53 @@ def normalize_market_key(location: str | None, province: str | None = None) -> s
 
 
 def infer_province(saved_search: dict[str, Any]) -> str | None:
-    location = (saved_search.get("location") or "").lower()
-    if any(token in location for token in ["bc", "british columbia", "victoria", "duncan", "nanaimo"]):
+    province = (saved_search.get("province") or "").strip().upper()
+    if province:
+        return province
+
+    snapshot = saved_search.get("search_snapshot")
+    if isinstance(snapshot, dict):
+        snapshot_province = (snapshot.get("province") or "").strip().upper()
+        if snapshot_province:
+            return snapshot_province
+
+    location = (saved_search.get("location") or "").strip().lower()
+    if not location and isinstance(snapshot, dict):
+        location = (snapshot.get("location") or "").strip().lower()
+
+    if any(token in location for token in ["bc", "british columbia"]):
+        return "BC"
+
+    normalized_location = re.sub(r"[^a-z0-9, ]+", " ", location)
+    parts = [part.strip() for part in normalized_location.split(",") if part.strip()]
+    candidate_tokens = set(parts)
+    candidate_tokens.update(token for token in re.split(r"\s+", normalized_location) if token)
+    if candidate_tokens & KNOWN_BC_LOCATIONS:
         return "BC"
     return None
+
+
+def build_market_profile_from_saved_search(
+    saved_search: dict[str, Any],
+    *,
+    status: str = "placeholder",
+    notes: str | None = None,
+) -> dict[str, Any]:
+    location = (saved_search.get("location") or "Unknown market").strip()
+    province = infer_province(saved_search)
+    return {
+        "market_key": normalize_market_key(location, province),
+        "market_name": location,
+        "province": province,
+        "geography_type": "market",
+        "status": status,
+        "notes": notes,
+    }
+
+
+def get_market_seed_bootstrap_payload(saved_search: dict[str, Any]) -> dict[str, Any] | None:
+    profile = build_market_profile_from_saved_search(saved_search)
+    return get_market_seed_bundle(profile["market_key"])
 
 
 def find_market_reference_match(
