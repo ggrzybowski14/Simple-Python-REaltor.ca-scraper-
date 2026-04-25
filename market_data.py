@@ -52,7 +52,7 @@ VANCOUVER_ISLAND_PROXY_MARKETS = {
 RENTAL_PROPERTY_TYPE_LABELS = {
     "apartment": "Apartment",
     "condo_apartment": "Condo apartment",
-    "single_family": "Single-family house",
+    "single_family": "Detached house",
     "semi_detached": "Semi-detached / duplex",
     "townhouse": "Townhouse",
 }

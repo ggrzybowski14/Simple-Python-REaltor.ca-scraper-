@@ -15,7 +15,17 @@ from urllib import error, parse, request
 
 from flask import Flask, abort, jsonify, redirect, render_template, request as flask_request, url_for
 
-from ai_underwriting import build_rent_ai_payload, build_rent_ai_prompt_text, call_openai_rent_suggestions
+from ai_underwriting import (
+    build_market_appreciation_gap_payload,
+    build_market_appreciation_gap_prompt_text,
+    build_market_rental_gap_payload,
+    build_market_rental_gap_prompt_text,
+    build_rent_ai_payload,
+    build_rent_ai_prompt_text,
+    call_openai_market_appreciation_gap_estimate,
+    call_openai_market_rental_gap_estimate,
+    call_openai_rent_suggestions,
+)
 from crea_hpi import SERIES_KEY_BY_PROPERTY_TYPE, format_signal_label
 from investment import (
     build_defaults_snapshot_from_form,
@@ -59,6 +69,9 @@ MARKET_METRIC_DEFINITIONS = {
     "median_household_income": {"label": "Median Household Income", "format": "currency0"},
 }
 
+MARKET_RENTAL_CARD_TYPES = ["apartment", "townhouse", "condo_apartment", "single_family"]
+MARKET_RENTAL_BEDROOM_OPTIONS = [1, 2, 3]
+
 
 @dataclass
 class SupabaseReadConfig:
@@ -76,6 +89,46 @@ def parse_optional_int(value: Any) -> int | None:
         return int(cleaned.replace(",", ""))
     except ValueError:
         return None
+
+
+def parse_market_bedroom_filter(value: Any, *, default: int | None = 2) -> int | None:
+    if value is None or str(value).strip() == "":
+        return default
+    cleaned = str(value).strip().lower()
+    if cleaned in {"all", "average", "avg"}:
+        return None
+    parsed = parse_optional_int(cleaned)
+    if parsed in MARKET_RENTAL_BEDROOM_OPTIONS:
+        return parsed
+    return default
+
+
+def build_market_rental_review_links(
+    market_profile: dict[str, Any],
+    property_type: str,
+    bedroom_count: int | None,
+) -> list[dict[str, str]]:
+    market_name = market_profile.get("market_name") or market_profile.get("market_key") or ""
+    province = market_profile.get("province") or ""
+    property_label = get_rental_property_type_label(property_type)
+    bedroom_label = f"{bedroom_count} bedroom" if isinstance(bedroom_count, int) else "rental"
+    base_query = " ".join(part for part in [market_name, province, bedroom_label, property_label, "rent"] if part)
+    source_queries = [
+        ("Craigslist", f"site:craigslist.org {base_query}"),
+        ("Rentals.ca", f"site:rentals.ca {base_query}"),
+        ("Zumper", f"site:zumper.com {base_query}"),
+        ("PadMapper", f"site:padmapper.com {base_query}"),
+        ("liv.rent", f"site:liv.rent {base_query}"),
+        ("Kijiji", f"site:kijiji.ca {base_query}"),
+        ("Local property managers", f"{base_query} property management rentals"),
+    ]
+    return [
+        {
+            "name": name,
+            "url": f"https://www.google.com/search?{parse.urlencode({'q': query})}",
+        }
+        for name, query in source_queries
+    ]
 
 
 def parse_iso_timestamp(value: str | None) -> datetime | None:
@@ -740,6 +793,16 @@ def create_app() -> Flask:
             market_profile = bootstrap_market_context(config, representative_saved_search, fallback_profile=market_profile)
         if market_profile is None and matching_saved_searches:
             market_profile = derive_market_profile_from_saved_search(matching_saved_searches[0])
+        selected_bedroom_count = parse_market_bedroom_filter(
+            flask_request.args.get("beds"),
+            default=(
+                representative_saved_search.get("beds_min")
+                if representative_saved_search
+                and representative_saved_search.get("beds_min") in MARKET_RENTAL_BEDROOM_OPTIONS
+                else 2
+            ),
+        )
+        market_profile["_selected_bedroom_count"] = selected_bedroom_count
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
         appreciation_chart = build_preferred_appreciation_context(
@@ -752,6 +815,8 @@ def create_app() -> Flask:
             saved_search=representative_saved_search,
             market_profile=market_profile,
             housing_summary=housing_summary,
+            selected_bedroom_count=selected_bedroom_count,
+            bedroom_options=MARKET_RENTAL_BEDROOM_OPTIONS,
             market_metric_cards=build_market_metric_cards(market_metrics),
             appreciation_chart=appreciation_chart,
             related_saved_searches=matching_saved_searches,
@@ -799,12 +864,17 @@ def create_app() -> Flask:
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
+        selected_bedroom_count = parse_market_bedroom_filter(
+            flask_request.args.get("beds"),
+            default=saved_search.get("beds_min") if saved_search.get("beds_min") in MARKET_RENTAL_BEDROOM_OPTIONS else 2,
+        )
         derived_profile = derive_market_profile_from_saved_search(saved_search)
         market_profile = fetch_market_profile(config, derived_profile["market_key"])
         if market_profile is None:
             market_profile = ensure_market_profile(config, saved_search)
         elif market_profile.get("status") == "discovered":
             market_profile = bootstrap_market_context(config, saved_search, fallback_profile=market_profile)
+        market_profile["_selected_bedroom_count"] = selected_bedroom_count
         market_metrics = fetch_market_metrics(config, market_profile["market_key"])
         housing_summary = build_market_housing_summary(config, market_profile)
         appreciation_chart = build_preferred_appreciation_context(
@@ -822,10 +892,117 @@ def create_app() -> Flask:
             saved_search=saved_search,
             market_profile=market_profile,
             housing_summary=housing_summary,
+            selected_bedroom_count=selected_bedroom_count,
+            bedroom_options=MARKET_RENTAL_BEDROOM_OPTIONS,
             market_metric_cards=build_market_metric_cards(market_metrics),
             appreciation_chart=appreciation_chart,
             related_saved_searches=related_saved_searches,
         )
+
+    @app.route("/markets/<market_key>/rental-ai-estimate", methods=["POST"])
+    def generate_market_rental_ai_estimate(market_key: str) -> Any:
+        config = get_supabase_read_config()
+        property_type = (flask_request.form.get("property_type") or "").strip().lower()
+        if property_type not in MARKET_RENTAL_CARD_TYPES:
+            abort(400)
+        selected_bedroom_count = parse_market_bedroom_filter(flask_request.form.get("beds"), default=2)
+        saved_searches = fetch_saved_searches(config)
+        matching_saved_searches = [
+            search for search in saved_searches
+            if derive_market_profile_from_saved_search(search)["market_key"] == market_key
+        ]
+        representative_saved_search = matching_saved_searches[0] if matching_saved_searches else None
+        if representative_saved_search is None:
+            abort(400)
+        market_profile = fetch_market_profile(config, market_key)
+        if market_profile is None:
+            market_profile = ensure_market_profile(config, representative_saved_search)
+        market_rows = fetch_market_reference_rows(config)
+        prompt_text = build_market_rental_gap_prompt_text()
+        payload = build_market_rental_gap_payload(
+            market_profile,
+            property_type,
+            selected_bedroom_count,
+            market_rows,
+        )
+        result = call_openai_market_rental_gap_estimate(prompt_text, payload)
+        parsed_response = result.get("parsed_response")
+        if not isinstance(parsed_response, dict):
+            abort(502)
+        persist_market_rental_ai_estimate(
+            config,
+            saved_search_id=int(representative_saved_search["id"]),
+            market_profile=market_profile,
+            property_type=property_type,
+            bedroom_count=selected_bedroom_count,
+            prompt_text=prompt_text,
+            input_context=payload,
+            raw_response_text=str(result.get("raw_response_text") or ""),
+            parsed_suggestion=parsed_response,
+            model=result.get("model"),
+        )
+        redirect_args: dict[str, Any] = {"market_key": market_key, "ai_rental_estimated": property_type}
+        if selected_bedroom_count is None:
+            redirect_args["beds"] = "all"
+        else:
+            redirect_args["beds"] = selected_bedroom_count
+        return redirect(url_for("market_context_by_key", **redirect_args))
+
+    @app.route("/markets/<market_key>/appreciation-ai-estimate", methods=["POST"])
+    def generate_market_appreciation_ai_estimate(market_key: str) -> Any:
+        config = get_supabase_read_config()
+        saved_searches = fetch_saved_searches(config)
+        matching_saved_searches = [
+            search for search in saved_searches
+            if derive_market_profile_from_saved_search(search)["market_key"] == market_key
+        ]
+        representative_saved_search = matching_saved_searches[0] if matching_saved_searches else None
+        if representative_saved_search is None:
+            abort(400)
+        market_profile = fetch_market_profile(config, market_key)
+        if market_profile is None:
+            market_profile = ensure_market_profile(config, representative_saved_search)
+        property_type_slug = (flask_request.form.get("property_type") or "composite").strip().lower()
+        direct_snapshot = fetch_hpi_market_metric_snapshot(
+            config,
+            market_key,
+            property_type_slug=property_type_slug,
+        )
+        proxy_market = get_appreciation_proxy_market(market_key)
+        proxy_snapshot = (
+            fetch_hpi_market_metric_snapshot(
+                config,
+                proxy_market["proxy_key"],
+                property_type_slug=property_type_slug,
+            )
+            if proxy_market is not None
+            else None
+        )
+        market_metrics = fetch_market_metrics(config, market_key)
+        prompt_text = build_market_appreciation_gap_prompt_text()
+        payload = build_market_appreciation_gap_payload(
+            market_profile,
+            direct_snapshot=direct_snapshot,
+            proxy_snapshot=proxy_snapshot,
+            proxy_market=proxy_market,
+            market_metrics=market_metrics,
+        )
+        result = call_openai_market_appreciation_gap_estimate(prompt_text, payload)
+        parsed_response = result.get("parsed_response")
+        if not isinstance(parsed_response, dict):
+            abort(502)
+        persist_market_appreciation_ai_estimate(
+            config,
+            saved_search_id=int(representative_saved_search["id"]),
+            market_profile=market_profile,
+            property_type_slug=property_type_slug,
+            prompt_text=prompt_text,
+            input_context=payload,
+            raw_response_text=str(result.get("raw_response_text") or ""),
+            parsed_suggestion=parsed_response,
+            model=result.get("model"),
+        )
+        return redirect(url_for("market_context_by_key", market_key=market_key, ai_appreciation_estimated=1))
 
     @app.route("/api/markets/<market_key>/appreciation")
     def api_market_appreciation(market_key: str) -> Any:
@@ -1608,6 +1785,169 @@ def fetch_market_reference_rows(config: SupabaseReadConfig) -> list[dict[str, An
     return result if isinstance(result, list) else []
 
 
+def fetch_market_rental_ai_estimates(
+    config: SupabaseReadConfig,
+    market_key: str,
+) -> dict[tuple[str, int | None], dict[str, Any]]:
+    if not market_key:
+        return {}
+    try:
+        result = supabase_get(
+            config,
+            "ai_underwriting_suggestions",
+            query={
+                "suggestion_type": "eq.market_rental_gap",
+                "status": "eq.generated",
+                "input_context->market->>market_key": f"eq.{market_key}",
+                "select": "id,input_context,parsed_suggestion,model,created_at",
+                "order": "created_at.desc",
+                "limit": 100,
+            },
+        )
+    except RuntimeError:
+        return {}
+    rows = result if isinstance(result, list) else []
+    estimates: dict[tuple[str, int | None], dict[str, Any]] = {}
+    for row in rows:
+        context = row.get("input_context")
+        suggestion = row.get("parsed_suggestion")
+        if not isinstance(context, dict) or not isinstance(suggestion, dict):
+            continue
+        benchmark = context.get("missing_benchmark")
+        if not isinstance(benchmark, dict):
+            continue
+        property_type = str(benchmark.get("property_type") or "").strip().lower()
+        bedroom_count = benchmark.get("bedroom_count")
+        if not property_type or (bedroom_count is not None and not isinstance(bedroom_count, int)):
+            continue
+        key = (property_type, bedroom_count)
+        if key not in estimates:
+            estimates[key] = {
+                **suggestion,
+                "model": row.get("model"),
+                "created_at": row.get("created_at"),
+            }
+    return estimates
+
+
+def persist_market_rental_ai_estimate(
+    config: SupabaseReadConfig,
+    *,
+    saved_search_id: int,
+    market_profile: dict[str, Any],
+    property_type: str,
+    bedroom_count: int | None,
+    prompt_text: str,
+    input_context: dict[str, Any],
+    raw_response_text: str,
+    parsed_suggestion: dict[str, Any],
+    model: str | None,
+) -> None:
+    supabase_post(
+        config,
+        "ai_underwriting_suggestions",
+        payload=[
+            {
+                "saved_search_id": saved_search_id,
+                "listing_id": None,
+                "suggestion_type": "market_rental_gap",
+                "status": "generated",
+                "prompt_text": prompt_text,
+                "model": model,
+                "input_context": input_context,
+                "raw_response_text": raw_response_text,
+                "parsed_suggestion": {
+                    **parsed_suggestion,
+                    "market_key": market_profile.get("market_key"),
+                    "property_type": property_type,
+                    "bedroom_count": bedroom_count,
+                },
+                "accepted_value": parsed_suggestion.get("average_rent_monthly"),
+            }
+        ],
+        prefer="return=representation",
+    )
+
+
+def fetch_market_appreciation_ai_estimate(
+    config: SupabaseReadConfig,
+    market_key: str,
+    *,
+    property_type_slug: str = "composite",
+) -> dict[str, Any] | None:
+    if not market_key:
+        return None
+    try:
+        result = supabase_get(
+            config,
+            "ai_underwriting_suggestions",
+            query={
+                "suggestion_type": "eq.market_appreciation_gap",
+                "status": "eq.generated",
+                "input_context->market->>market_key": f"eq.{market_key}",
+                "input_context->>property_type_slug": f"eq.{property_type_slug}",
+                "select": "id,input_context,parsed_suggestion,model,created_at",
+                "order": "created_at.desc",
+                "limit": 1,
+            },
+        )
+    except RuntimeError:
+        return None
+    rows = result if isinstance(result, list) else []
+    if not rows:
+        return None
+    row = rows[0]
+    suggestion = row.get("parsed_suggestion")
+    if not isinstance(suggestion, dict):
+        return None
+    return {
+        **suggestion,
+        "model": row.get("model"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def persist_market_appreciation_ai_estimate(
+    config: SupabaseReadConfig,
+    *,
+    saved_search_id: int,
+    market_profile: dict[str, Any],
+    property_type_slug: str,
+    prompt_text: str,
+    input_context: dict[str, Any],
+    raw_response_text: str,
+    parsed_suggestion: dict[str, Any],
+    model: str | None,
+) -> None:
+    normalized_context = {
+        **input_context,
+        "property_type_slug": property_type_slug,
+    }
+    supabase_post(
+        config,
+        "ai_underwriting_suggestions",
+        payload=[
+            {
+                "saved_search_id": saved_search_id,
+                "listing_id": None,
+                "suggestion_type": "market_appreciation_gap",
+                "status": "generated",
+                "prompt_text": prompt_text,
+                "model": model,
+                "input_context": normalized_context,
+                "raw_response_text": raw_response_text,
+                "parsed_suggestion": {
+                    **parsed_suggestion,
+                    "market_key": market_profile.get("market_key"),
+                    "property_type_slug": property_type_slug,
+                },
+                "accepted_value": parsed_suggestion.get("latest_benchmark_price"),
+            }
+        ],
+        prefer="return=representation",
+    )
+
+
 def fetch_market_profile(config: SupabaseReadConfig, market_key: str) -> dict[str, Any] | None:
     try:
         result = supabase_get(
@@ -1800,6 +2140,71 @@ def build_appreciation_metric_cards(snapshot: dict[str, Any] | None) -> list[dic
     ]
 
 
+def build_empty_appreciation_metric_cards() -> list[dict[str, str | None]]:
+    return [
+        {
+            "label": "Latest Market-Wide Benchmark Home Price",
+            "value": "—",
+            "meta": "No data",
+        },
+        {
+            "label": "5-Year Annualized",
+            "value": "—",
+            "meta": "No data",
+        },
+        {
+            "label": "10-Year Annualized",
+            "value": "—",
+            "meta": "No data",
+        },
+        {
+            "label": "12-Month Change",
+            "value": "—",
+            "meta": "No data",
+        },
+        {
+            "label": "1-Month Change",
+            "value": "—",
+            "meta": "No data",
+        },
+    ]
+
+
+def build_ai_appreciation_metric_cards(estimate: dict[str, Any]) -> list[dict[str, str | None]]:
+    def format_optional_percent(value: Any) -> str:
+        if value is None:
+            return "—"
+        return format_percent(float(value), digits=1)
+
+    return [
+        {
+            "label": "Latest Market-Wide Benchmark Home Price",
+            "value": format_currency(float(estimate["latest_benchmark_price"])) if estimate.get("latest_benchmark_price") is not None else "—",
+            "meta": "AI estimate",
+        },
+        {
+            "label": "5-Year Annualized",
+            "value": format_optional_percent(estimate.get("appreciation_5y_cagr_percent")),
+            "meta": "AI estimate",
+        },
+        {
+            "label": "10-Year Annualized",
+            "value": format_optional_percent(estimate.get("appreciation_10y_cagr_percent")),
+            "meta": "AI estimate",
+        },
+        {
+            "label": "12-Month Change",
+            "value": format_optional_percent(estimate.get("change_12m_percent")),
+            "meta": "AI estimate",
+        },
+        {
+            "label": "1-Month Change",
+            "value": format_optional_percent(estimate.get("change_1m_percent")),
+            "meta": "AI estimate",
+        },
+    ]
+
+
 def format_axis_currency(value: float) -> str:
     if value >= 1_000_000:
         return f"${value / 1_000_000:.1f}M"
@@ -1977,6 +2382,8 @@ def build_preferred_appreciation_context(
                     f"The latest benchmark shown is the CREA {hpi_snapshot.get('property_type_label', 'Composite')} "
                     f"market-wide benchmark home price for {hpi_snapshot.get('market_name', market_key)} as of {hpi_snapshot.get('latest_date')}."
                 ),
+                "proxy_active": False,
+                "proxy_available": get_appreciation_proxy_market(market_key) is not None,
                 "ai_estimate_available": True,
             }
         )
@@ -2035,20 +2442,45 @@ def build_preferred_appreciation_context(
             )
             return chart
 
+    ai_estimate = fetch_market_appreciation_ai_estimate(
+        config,
+        market_key,
+        property_type_slug=property_type_slug,
+    )
     fallback_chart = build_appreciation_chart(
         fetch_market_metric_series(config, market_key, series_key="residential_property_price_index_total")
     )
+    metric_cards = build_empty_appreciation_metric_cards()
+    source_key = "fallback_series"
+    source_name = fallback_chart.get("source_name")
+    trend_label = None
+    data_quality_flag = None
+    notes = fallback_chart.get("notes")
+    latest_benchmark_price = None
+    latest_benchmark_price_display = "—"
+    latest_date = None
+    if ai_estimate is not None:
+        metric_cards = build_ai_appreciation_metric_cards(ai_estimate)
+        source_key = "ai_appreciation_estimate"
+        source_name = "AI estimate"
+        trend_label = ai_estimate.get("trend_label")
+        data_quality_flag = ai_estimate.get("confidence")
+        notes = ai_estimate.get("reasoning")
+        latest_benchmark_price = ai_estimate.get("latest_benchmark_price")
+        latest_benchmark_price_display = (
+            format_currency(float(latest_benchmark_price)) if latest_benchmark_price is not None else "—"
+        )
     fallback_chart.update(
         {
-            "source_key": "fallback_series",
+            "source_key": source_key,
             "property_type_label": None,
-            "latest_date": None,
-            "latest_benchmark_price": None,
-            "latest_benchmark_price_display": "—",
-            "metric_cards": [],
+            "latest_date": latest_date,
+            "latest_benchmark_price": latest_benchmark_price,
+            "latest_benchmark_price_display": latest_benchmark_price_display,
+            "metric_cards": metric_cards,
             "trend_direction": None,
-            "trend_label": None,
-            "data_quality_flag": None,
+            "trend_label": trend_label,
+            "data_quality_flag": data_quality_flag,
             "method_notes": None,
             "benchmark_explainer": None,
             "proxy_label": proxy_market["label"] if proxy_market else None,
@@ -2056,10 +2488,13 @@ def build_preferred_appreciation_context(
             "proxy_active": False,
             "proxy_available": proxy_market is not None,
             "ai_estimate_available": True,
+            "ai_estimate_active": ai_estimate is not None,
+            "ai_source_names": ai_estimate.get("source_names", []) if ai_estimate is not None else [],
+            "ai_source_urls": ai_estimate.get("source_urls", []) if ai_estimate is not None else [],
         }
     )
     if not fallback_chart["available"]:
-        fallback_chart["notes"] = (
+        fallback_chart["notes"] = notes or (
             "CREA HPI is the primary appreciation source for supported markets. "
             "Markets without official coverage continue to show a clean empty state for now."
         )
@@ -2069,10 +2504,15 @@ def build_preferred_appreciation_context(
 def build_market_housing_summary(
     config: SupabaseReadConfig,
     market_profile: dict[str, Any],
+    *,
+    bedroom_count: int | None = 2,
 ) -> dict[str, Any]:
+    if "_selected_bedroom_count" in market_profile:
+        bedroom_count = market_profile.get("_selected_bedroom_count")
     market_rows = fetch_market_reference_rows(config)
     exact_market_key = market_profile.get("market_key")
     exact_rows = [row for row in market_rows if row.get("market_key") == exact_market_key]
+    ai_estimates = fetch_market_rental_ai_estimates(config, str(exact_market_key or ""))
 
     grouped_rows: dict[str, list[dict[str, Any]]] = {}
     for row in exact_rows:
@@ -2081,34 +2521,54 @@ def build_market_housing_summary(
             grouped_rows.setdefault(property_type, []).append(row)
 
     rental_cards: list[dict[str, Any]] = []
-    for property_type in ["single_family", "semi_detached", "townhouse", "apartment", "condo_apartment"]:
+    for property_type in MARKET_RENTAL_CARD_TYPES:
         rows = grouped_rows.get(property_type) or []
-        if not rows:
-            continue
-        rent_row = next((row for row in rows if row.get("bedroom_count") == 2 and row.get("average_rent_monthly") is not None), None)
+        if bedroom_count is None:
+            rent_row = next((row for row in rows if row.get("bedroom_count") is None and row.get("average_rent_monthly") is not None), None)
+        else:
+            rent_row = next((row for row in rows if row.get("bedroom_count") == bedroom_count and row.get("average_rent_monthly") is not None), None)
         if rent_row is None:
             rent_row = next((row for row in rows if row.get("average_rent_monthly") is not None), None)
-        vacancy_row = next((row for row in rows if row.get("bedroom_count") == 2 and row.get("vacancy_rate_percent") is not None), None)
+        if bedroom_count is None:
+            vacancy_row = next((row for row in rows if row.get("bedroom_count") is None and row.get("vacancy_rate_percent") is not None), None)
+        else:
+            vacancy_row = next((row for row in rows if row.get("bedroom_count") == bedroom_count and row.get("vacancy_rate_percent") is not None), None)
         if vacancy_row is None:
             vacancy_row = next((row for row in rows if row.get("bedroom_count") is None and row.get("vacancy_rate_percent") is not None), None)
         if vacancy_row is None:
             vacancy_row = next((row for row in rows if row.get("vacancy_rate_percent") is not None), None)
-        if rent_row is None and vacancy_row is None:
-            continue
-        source_row = rent_row or vacancy_row or rows[0]
+        estimate_key = (property_type, bedroom_count)
+        ai_estimate = ai_estimates.get(estimate_key) or ai_estimates.get((property_type, None))
+        source_row = rent_row or vacancy_row or (rows[0] if rows else {})
         average_rent = rent_row.get("average_rent_monthly") if rent_row else None
         vacancy_rate = vacancy_row.get("vacancy_rate_percent") if vacancy_row else None
-        bedroom_count = rent_row.get("bedroom_count") if rent_row else None
+        value_source = "cmhc" if average_rent is not None or vacancy_rate is not None else "missing"
+        if average_rent is None and isinstance(ai_estimate, dict):
+            average_rent = ai_estimate.get("average_rent_monthly")
+            value_source = "ai_estimate"
+        if vacancy_rate is None and isinstance(ai_estimate, dict):
+            vacancy_rate = ai_estimate.get("vacancy_rate_percent")
+        displayed_bedroom_count = bedroom_count if bedroom_count is not None else (rent_row.get("bedroom_count") if rent_row else None)
+        source_names = ai_estimate.get("source_names", []) if isinstance(ai_estimate, dict) else []
+        source_urls = ai_estimate.get("source_urls", []) if isinstance(ai_estimate, dict) else []
+        review_links = build_market_rental_review_links(market_profile, property_type, bedroom_count)
         rental_cards.append(
             {
                 "property_type": property_type,
                 "property_type_label": get_rental_property_type_label(property_type),
                 "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
                 "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
-                "rent_label": f"{bedroom_count}-bedroom rent" if isinstance(bedroom_count, int) else "Average rent",
+                "rent_label": f"{displayed_bedroom_count}-bedroom rent" if isinstance(displayed_bedroom_count, int) else "Average rent",
                 "source_url": source_row.get("source_url"),
                 "source_date": source_row.get("source_date"),
-                "notes": None,
+                "notes": ai_estimate.get("reasoning") if value_source == "ai_estimate" and isinstance(ai_estimate, dict) else None,
+                "value_source": value_source,
+                "confidence": ai_estimate.get("confidence") if value_source == "ai_estimate" and isinstance(ai_estimate, dict) else None,
+                "ai_source_names": source_names,
+                "ai_source_urls": source_urls,
+                "review_links": review_links,
+                "bedroom_count": bedroom_count,
+                "missing_value": value_source == "missing",
             }
         )
 
@@ -2131,6 +2591,7 @@ def build_market_housing_summary(
             "source_url": None,
             "source_date": None,
             "confidence": None,
+            "selected_bedroom_count": bedroom_count,
         }
 
     reference = market_match.get("market_reference") or {}
@@ -2162,6 +2623,7 @@ def build_market_housing_summary(
         "source_url": reference.get("source_url"),
         "source_date": reference.get("source_date"),
         "confidence": market_match.get("confidence"),
+        "selected_bedroom_count": bedroom_count,
     }
 
 

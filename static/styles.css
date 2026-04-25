@@ -186,6 +186,27 @@ code {
   line-height: 1.05;
 }
 
+.rental-card-details {
+  border-top: 1px solid rgba(124, 100, 72, 0.18);
+  margin-top: 0.35rem;
+  padding-top: 0.6rem;
+}
+
+.rental-card-details summary {
+  color: var(--green);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.rental-card-details summary::-webkit-details-marker {
+  color: var(--green);
+}
+
+.compact-actions {
+  gap: 0.45rem 0.8rem;
+  margin-top: 0.45rem;
+}
+
 .appreciation-layout-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

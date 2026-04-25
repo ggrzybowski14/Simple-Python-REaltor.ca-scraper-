@@ -42,6 +42,30 @@
   <div class="panel-header">
     <p class="eyebrow">Housing Fundamentals</p>
     <h2>Rental baseline currently feeding this market context</h2>
+    <form method="get" class="segmented-control market-bedroom-control">
+      <span class="meta-line">Bedrooms</span>
+      {% if request.args.get('use_proxy') == '1' %}
+      <input type="hidden" name="use_proxy" value="1">
+      {% endif %}
+      {% for option in bedroom_options %}
+      <button
+        type="submit"
+        name="beds"
+        value="{{ option }}"
+        class="mini-button {% if selected_bedroom_count == option %}toggle-active{% endif %}"
+      >
+        {{ option }}
+      </button>
+      {% endfor %}
+      <button
+        type="submit"
+        name="beds"
+        value="all"
+        class="mini-button {% if selected_bedroom_count is none %}toggle-active{% endif %}"
+      >
+        Avg
+      </button>
+    </form>
   </div>
   {% if housing_summary.rental_cards %}
   <div class="market-metric-grid">
@@ -51,14 +75,49 @@
       <strong>{{ rental_card.rent_display }}</strong>
       <p class="meta-line">{{ rental_card.rent_label }}</p>
       <p class="meta-line">Vacancy: {{ rental_card.vacancy_display }}</p>
-      {% if rental_card.notes %}
-      <p class="meta-line">{{ rental_card.notes }}</p>
+      {% if rental_card.value_source == 'ai_estimate' %}
+      <p class="meta-line">AI estimate · {{ rental_card.confidence|title if rental_card.confidence else 'Low' }} confidence</p>
+      {% elif rental_card.missing_value %}
+      <p class="meta-line">No CMHC value imported for this rental type.</p>
       {% endif %}
       {% if rental_card.source_date %}
       <p class="meta-line">Source date: {{ rental_card.source_date }}</p>
       {% endif %}
       {% if rental_card.source_url %}
       <a class="internal-link" href="{{ rental_card.source_url }}" target="_blank" rel="noreferrer">Source</a>
+      {% endif %}
+      {% if rental_card.value_source == 'ai_estimate' or rental_card.missing_value %}
+      <details class="rental-card-details">
+        <summary>Estimate details</summary>
+        {% if rental_card.notes %}
+        <p class="meta-line">{{ rental_card.notes }}</p>
+        {% endif %}
+        {% if rental_card.ai_source_names %}
+        <p class="meta-line">AI suggested review: {{ rental_card.ai_source_names|join(', ') }}</p>
+        {% endif %}
+        {% if rental_card.ai_source_urls %}
+        <div class="card-actions compact-actions">
+          {% for source_url in rental_card.ai_source_urls[:3] %}
+          <a class="internal-link" href="{{ source_url }}" target="_blank" rel="noreferrer">Review source</a>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if rental_card.review_links %}
+        <p class="meta-line">Search leads used for this estimate:</p>
+        <div class="card-actions compact-actions">
+          {% for review_link in rental_card.review_links[:4] %}
+          <a class="internal-link" href="{{ review_link.url }}" target="_blank" rel="noreferrer">{{ review_link.name }}</a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </details>
+      {% endif %}
+      {% if rental_card.missing_value or rental_card.value_source == 'ai_estimate' %}
+      <form method="post" action="{{ url_for('generate_market_rental_ai_estimate', market_key=market_profile.market_key) }}" class="inline-form">
+        <input type="hidden" name="property_type" value="{{ rental_card.property_type }}">
+        <input type="hidden" name="beds" value="{{ 'all' if selected_bedroom_count is none else selected_bedroom_count }}">
+        <button type="submit" class="button-secondary">{{ 'Re-estimate with AI' if rental_card.value_source == 'ai_estimate' else 'Estimate with AI' }}</button>
+      </form>
       {% endif %}
     </article>
     {% endfor %}
@@ -97,6 +156,10 @@
     <h2>{{ appreciation_chart.title }}</h2>
     {% if appreciation_chart.proxy_available and not appreciation_chart.proxy_active %}
     <p class="meta-line">No direct CREA HPI market series is available for this market.</p>
+    {% elif appreciation_chart.proxy_active %}
+    <p class="meta-line">Using {{ appreciation_chart.proxy_market_name }} as a proxy for this market.</p>
+    {% endif %}
+    {% if appreciation_chart.proxy_available %}
     <div class="card-actions">
       {% if saved_search %}
       <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
@@ -104,6 +167,12 @@
       <a class="button-secondary button-link" href="{{ url_for('market_context_by_key', market_key=market_profile.market_key, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
       {% endif %}
     </div>
+    {% endif %}
+    {% if appreciation_chart.ai_estimate_available %}
+    <form method="post" action="{{ url_for('generate_market_appreciation_ai_estimate', market_key=market_profile.market_key) }}" class="inline-form">
+      <input type="hidden" name="property_type" value="composite">
+      <button type="submit" class="button-secondary">{{ 'Re-estimate with AI' if appreciation_chart.ai_estimate_active else 'Estimate with AI' }}</button>
+    </form>
     {% endif %}
   </div>
   {% set top_metric_cards = appreciation_chart.metric_cards[:4] if appreciation_chart.metric_cards else [] %}
@@ -162,15 +231,28 @@
     </div>
     {% else %}
     <div class="metric-card market-metric-card appreciation-empty-card appreciation-chart-slot">
-    <span class="metric-label">Not available yet</span>
-    <strong>Series pending</strong>
-    <p class="meta-line">{{ appreciation_chart.empty_message }}</p>
-    {% if appreciation_chart.notes %}
-    <p class="meta-line">{{ appreciation_chart.notes }}</p>
-    {% endif %}
-    {% if appreciation_chart.ai_estimate_available %}
-    <p class="meta-line">AI fallback can be added later as a user-triggered estimate path, but it is not active in this market page yet.</p>
-    {% endif %}
+      <span class="metric-label">Chart</span>
+      <strong>Series pending</strong>
+      <p class="meta-line">{{ appreciation_chart.empty_message }}</p>
+      {% if appreciation_chart.ai_estimate_active %}
+      <p class="meta-line">Metric tiles are using an AI estimate. A real chart still requires an official or imported time series.</p>
+      {% endif %}
+      {% if appreciation_chart.notes %}
+      <details class="rental-card-details">
+        <summary>Estimate details</summary>
+        <p class="meta-line">{{ appreciation_chart.notes }}</p>
+        {% if appreciation_chart.ai_source_names %}
+        <p class="meta-line">AI suggested review: {{ appreciation_chart.ai_source_names|join(', ') }}</p>
+        {% endif %}
+        {% if appreciation_chart.ai_source_urls %}
+        <div class="card-actions compact-actions">
+          {% for source_url in appreciation_chart.ai_source_urls[:3] %}
+          <a class="internal-link" href="{{ source_url }}" target="_blank" rel="noreferrer">Review source</a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </details>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -235,20 +317,6 @@
     </div>
     {% else %}
     <p class="empty-state">No saved searches are currently linked to this market key.</p>
-    {% endif %}
-  </div>
-
-  <div class="panel">
-    <div class="panel-header">
-      <p class="eyebrow">Next Layer</p>
-      <h2>What is intentionally not populated yet</h2>
-    </div>
-    <p class="meta-line">
-      Rent growth assumptions and AI-enriched market narrative are not seeded in this pass. The market page now leaves room
-      for official appreciation where available without pretending unsupported markets have equivalent coverage.
-    </p>
-    {% if market_profile.notes %}
-    <p class="meta-line">{{ market_profile.notes }}</p>
     {% endif %}
   </div>
 </section>
