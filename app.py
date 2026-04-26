@@ -635,6 +635,44 @@ def serialize_buy_box_criteria(criteria: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_combined_analysis_verdict(
+    buy_box: dict[str, Any] | None,
+    underwriting_verdict: dict[str, str],
+) -> dict[str, str]:
+    buy_box_label = (buy_box or {}).get("label")
+    underwriting_slug = underwriting_verdict.get("slug")
+
+    if buy_box_label == "Unlikely" or underwriting_slug == "weak":
+        return {
+            "label": "Reject",
+            "slug": "reject",
+            "reason": "Fails the buy box or underwriting floor.",
+        }
+    if buy_box_label == "Maybe" or underwriting_slug == "borderline":
+        return {
+            "label": "Review",
+            "slug": "review",
+            "reason": "One analysis layer needs a closer look.",
+        }
+    if buy_box_label == "Likely" and underwriting_slug == "promising":
+        return {
+            "label": "Strong",
+            "slug": "strong",
+            "reason": "Passes both buy-box and underwriting checks.",
+        }
+    if buy_box is None and underwriting_slug == "promising":
+        return {
+            "label": "Strong",
+            "slug": "strong",
+            "reason": "Promising underwriting; no buy box is active.",
+        }
+    return {
+        "label": "Review",
+        "slug": "review",
+        "reason": "Analysis is incomplete or mixed.",
+    }
+
+
 def build_underwriting_rows(
     active_listings: list[dict[str, Any]],
     defaults_snapshot: dict[str, dict[str, Any]],
@@ -647,6 +685,7 @@ def build_underwriting_rows(
         listing_overrides = (overrides_by_listing_id or {}).get(listing_id or -1, {})
         analysis = calculate_underwriting(listing, defaults_snapshot, listing_overrides=listing_overrides)
         listing_buy_box = (buy_box_results_by_listing_id or {}).get(listing["listing_id"])
+        normalized_buy_box = normalize_buy_box_bucket(listing_buy_box)
         rows.append(
             {
                 "listing": listing,
@@ -654,14 +693,17 @@ def build_underwriting_rows(
                 "warnings": analysis["warnings"],
                 "verdict": analysis["verdict"],
                 "effective_assumptions": analysis["effective_assumptions"],
-                "buy_box": normalize_buy_box_bucket(listing_buy_box),
+                "buy_box": normalized_buy_box,
+                "combined_verdict": build_combined_analysis_verdict(normalized_buy_box, analysis["verdict"]),
                 "overrides": listing_overrides,
             }
         )
+    combined_rank = {"Strong": 0, "Review": 1, "Reject": 2}
     bucket_rank = {"Likely": 0, "Maybe": 1, "Unlikely": 2, "All Listings": 3}
     return sorted(
         rows,
         key=lambda row: (
+            combined_rank.get(row.get("combined_verdict", {}).get("label", "Review"), 9),
             bucket_rank.get((row.get("buy_box") or {}).get("label", "All Listings"), 9),
             999999999 if row["metrics"].get("monthly_cash_flow") is None else -row["metrics"]["monthly_cash_flow"],
             999999999 if row["metrics"].get("rent_to_price_ratio") is None else -row["metrics"]["rent_to_price_ratio"],
@@ -1049,6 +1091,9 @@ def create_app() -> Flask:
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
+        if flask_request.args.get("clear_buy_box"):
+            clear_saved_buy_box(config, saved_search)
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id))
         active_listings = fetch_active_listings(config, saved_search_id)
         defaults_snapshot, market_match = hydrate_defaults_for_saved_search(config, saved_search)
         overrides_by_listing_id = fetch_listing_investment_overrides(
@@ -1056,7 +1101,10 @@ def create_app() -> Flask:
             saved_search_id,
             [listing["listing_id"] for listing in active_listings],
         )
-        buy_box = build_buy_box_criteria({}, saved_search)
+        buy_box = build_buy_box_criteria(flask_request.args, saved_search)
+        if flask_request.args.get("apply_buy_box"):
+            persist_saved_buy_box(config, saved_search, buy_box)
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, analyzed=1))
         buy_box_results_by_listing_id = build_buy_box_result_lookup(active_listings, buy_box)
         smart_maintenance_active = any(
             isinstance(snapshot, dict) and snapshot.get("maintenance_percent_source") == "smart_listing_estimate"
@@ -1088,6 +1136,7 @@ def create_app() -> Flask:
             smart_capex_active=smart_capex_active,
             utilities_rule_based_estimate=utilities_rule_based_estimate,
             insurance_rule_based_estimate=insurance_rule_based_estimate,
+            property_type_options=PROPERTY_TYPE_OPTIONS,
             ai_preview_listing_lookup={
                 normalize_listing_id(listing.get("listing_id")): listing
                 for listing in active_listings

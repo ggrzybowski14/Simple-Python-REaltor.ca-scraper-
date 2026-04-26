@@ -128,7 +128,7 @@ Current translation note:
 These references translate into the following concrete product direction for this repo:
 
 - `listing analyzer`
-  buy-and-hold underwriting for individual listings
+  combined buy-box screening and buy-and-hold underwriting for scraped listings
 - `market analyzer`
   future market-level pages for Canadian regions
 - `assumptions model`
@@ -136,7 +136,7 @@ These references translate into the following concrete product direction for thi
 - `confidence model`
   every important estimate should indicate source and confidence
 - `investment UX`
-  metrics should be presented as decisions and signals, not just raw formulas
+  metrics should be presented as decisions and signals, not just raw formulas; the current app translates buy-box plus underwriting into `Strong`, `Review`, and `Reject`
 - `source UX`
   manual, CMHC, and AI should behave as explicit source modes in the same assumption card
 

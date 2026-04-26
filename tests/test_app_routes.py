@@ -480,7 +480,8 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Victoria Houses" in body
-    assert "Investment Analyzer" in body
+    assert "Listing Analysis" in body
+    assert "Buy box plus underwriting" in body
     assert "123 Example St" in body
 
 

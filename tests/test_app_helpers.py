@@ -93,6 +93,21 @@ def test_build_buy_box_result_lookup_returns_bucket_labels() -> None:
     assert lookup[2]["label"] == "Unmatched"
 
 
+def test_build_combined_analysis_verdict_uses_buy_box_and_underwriting() -> None:
+    assert webapp.build_combined_analysis_verdict(
+        {"label": "Likely"},
+        {"label": "Promising", "slug": "promising"},
+    )["label"] == "Strong"
+    assert webapp.build_combined_analysis_verdict(
+        {"label": "Maybe"},
+        {"label": "Promising", "slug": "promising"},
+    )["label"] == "Review"
+    assert webapp.build_combined_analysis_verdict(
+        {"label": "Likely"},
+        {"label": "Weak", "slug": "weak"},
+    )["label"] == "Reject"
+
+
 def test_build_scrape_args_omits_zero_beds_filter() -> None:
     args = webapp.build_scrape_args(
         MultiDict(

@@ -334,6 +334,17 @@ code {
   gap: 1rem;
 }
 
+.analysis-buy-box-form {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  align-items: start;
+}
+
+.analysis-buy-box-form label:nth-of-type(4),
+.analysis-buy-box-form label:nth-of-type(5),
+.analysis-buy-box-form .card-actions {
+  grid-column: span 3;
+}
+
 .scrape-form label,
 .advanced-grid label {
   display: grid;
@@ -741,6 +752,10 @@ textarea {
   padding: 0.9rem 1rem;
   border-radius: 18px;
   background: var(--surface-strong);
+}
+
+.analysis-summary {
+  margin: 1rem 0 0;
 }
 
 .ai-error {
@@ -1159,6 +1174,21 @@ textarea {
   color: var(--green);
 }
 
+.verdict-strong {
+  background: rgba(47, 107, 79, 0.16);
+  color: var(--green);
+}
+
+.verdict-review {
+  background: rgba(182, 122, 38, 0.14);
+  color: #8b4f0d;
+}
+
+.verdict-reject {
+  background: rgba(138, 37, 37, 0.12);
+  color: #8a2525;
+}
+
 .verdict-borderline {
   background: rgba(182, 122, 38, 0.14);
   color: #8b4f0d;
@@ -1191,8 +1221,15 @@ textarea {
 @media (max-width: 980px) {
   .content-grid,
   .compact-hero,
-  .buy-box-grid {
+  .buy-box-grid,
+  .analysis-buy-box-form {
     grid-template-columns: 1fr;
+  }
+
+  .analysis-buy-box-form label:nth-of-type(4),
+  .analysis-buy-box-form label:nth-of-type(5),
+  .analysis-buy-box-form .card-actions {
+    grid-column: auto;
   }
 
   .hero-metrics {

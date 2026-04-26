@@ -10,7 +10,7 @@ Can this scraper, data model, and local website support a repeatable workflow fo
 
 1. collecting active listings by market
 2. filtering them against a buy box
-3. underwriting promising listings with investment metrics
+3. underwriting them with investment metrics in the same listing-analysis workflow
 4. later adding market context and deeper review workflow
 
 ## Current State
@@ -19,11 +19,12 @@ The codebase now has three working layers:
 
 - a headed Realtor.ca scraper with conservative anti-bot behavior
 - a Supabase-backed ingestion and lifecycle model
-- a local Flask website for browsing saved searches, listings, and buy-box results
+- a local Flask website for browsing saved searches, listings, and combined listing-analysis results
 
 The codebase now also has the first real underwriting layer:
 
-- a saved-search investment analyzer page for all active listings
+- a saved-search listing-analysis page for all active listings
+- combined buy-box plus underwriting final verdicts
 - persisted underwriting defaults at the saved-search level
 - listing-level rent overrides
 - CMHC-backed market reference data for rent and vacancy baselines
@@ -87,11 +88,13 @@ The local website currently provides:
 - background launch of headed scrape jobs
 - saved-search detail page with all active scraped listings
 - saved-search hero metrics for active listings, site results count, and collected count
+- saved-search detail page now acts as inventory review plus entry point into `Analyze Listings`
 - listing detail page with richer fields and photo gallery
 - collapsible recent-run history
 - persisted buy-box settings per saved search
+- listing-analysis page where buy-box screening and underwriting assumptions run together
 - targeted retry of sparse listing details
-- investment analyzer route for underwriting all active listings in a saved search
+- investment analyzer route retained as the listing-analysis URL for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
 - source-mode controls for rent, vacancy, utilities, and insurance
 - smart per-listing maintenance and CapEx estimate actions
@@ -136,8 +139,8 @@ The intended product direction is now:
 2. scrape all active listings matching that market search
 3. store current listing state plus scrape history
 4. review listings in the local website
-5. run a buy box against the active listings
-6. underwrite promising listings with investment metrics
+5. run buy-box screening and underwriting together against active listings
+6. review combined `Strong`, `Review`, and `Reject` results
 7. later add listing workflow states, market context, and projection tools
 
 The product remains single-user and local-first for now.
@@ -160,9 +163,10 @@ These are also separate layers.
 
 The listing analyzer is the more mature product area. The market analyzer is no longer just future thinking; the first scaffold is now built, but it is still intentionally narrow.
 
-## Next Major Product Area: Investment Analyzer
+## Next Major Product Area: Listing Analysis
 
-The next phase of the project is no longer just listing review. It is a buy-and-hold investment analyzer layered on top of scraped listings.
+The next phase of the project is no longer just listing review. It is a buy-and-hold listing-analysis workspace layered on top of scraped listings.
+This workspace now runs buy-box screening and underwriting together instead of asking the user to run a buy box first and then open a separate underwriting flow.
 
 The first V1 slice is now built.
 
@@ -172,13 +176,14 @@ The immediate goal is:
 - auto-fill investment assumptions as much as possible
 - let the user edit those assumptions
 - calculate practical investment metrics
-- show quick visual judgment on whether the listing looks promising
+- show quick visual judgment on whether the listing is `Strong`, needs `Review`, or should be rejected
 
 What is already implemented:
 
 - `/saved-searches/<id>/investment-analyzer`
-- buy-box-grouped underwriting table for all active listings
-- sorting within each bucket by strongest performance first
+- buy-box controls on the listing-analysis page
+- combined buy-box plus underwriting verdicts for all active listings
+- sorting within each combined result group by strongest performance first
 - saved-search underwriting defaults
 - listing-level rent overrides
 - listing-detail underwriting section
@@ -505,9 +510,19 @@ The reviewed BiggerPockets calculator workbook includes structured sections for:
 
 We do not need to clone the spreadsheet, but it confirms that the product should separate current underwriting from longer-term projections.
 
-## Planned UI Structure For Listing Analysis
+## Current UI Structure For Listing Analysis
 
-The recommended listing-level analyzer layout is:
+The current listing-analysis route is `/saved-searches/<id>/investment-analyzer`.
+The URL name is still historical, but the product surface now behaves as a combined Listing Analysis workspace.
+
+The current page structure is:
+
+- `Buy Box`
+  structured screening criteria plus AI interpretation goal
+- `Assumptions`
+  editable underwriting assumptions with source labels and source-mode controls
+- `Analysis Results`
+  a combined table that shows buy-box result, underwriting metrics, underwriting verdict, and final result
 
 - `Cash Flow`
   monthly rent, monthly expenses, mortgage, monthly cash flow
@@ -521,6 +536,15 @@ The recommended listing-level analyzer layout is:
   editable assumptions with source labels
 - `Confidence`
   explicit source and confidence per important estimate
+
+Current final result buckets:
+
+- `Strong`
+  buy box is likely or inactive, and underwriting is promising
+- `Review`
+  buy box is maybe, underwriting is borderline, or the signal is mixed
+- `Reject`
+  buy box is unlikely or underwriting is weak
 
 ## Product Decisions Locked In
 
@@ -586,7 +610,7 @@ Still rough:
 
 ### Phase 3: Buy Box And Listing Analysis
 
-Status: started
+Status: active and integrated
 
 Completed:
 
@@ -597,14 +621,16 @@ Completed:
 - persisted buy-box settings per saved search
 - listing-detail buy-box verdict and reasoning
 - stricter detached-house filtering in app logic so duplex and townhouse rows are excluded from `house`
+- buy-box controls moved into the listing-analysis workspace
+- combined `Strong`, `Review`, and `Reject` verdicts based on buy-box plus underwriting
 
 Next expansion area:
 
-- add investment underwriting on listing detail pages
+- polish the combined results table and add explicit listing workflow states such as shortlist, ignore, and notes
 
 ### Phase 4: Investment Analyzer V1
 
-Status: active
+Status: active and partially merged into Listing Analysis
 
 Scope:
 
@@ -622,6 +648,7 @@ Completed or in progress within this phase:
 - AI-assisted listing-level rent application
 - BC-wide rule-based utilities and insurance defaults
 - listing-level smart maintenance and CapEx heuristics
+- underwriting table is now grouped by combined listing-analysis result rather than only buy-box bucket
 
 Still missing in this phase:
 

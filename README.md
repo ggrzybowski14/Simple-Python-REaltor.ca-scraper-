@@ -18,8 +18,9 @@ Current prototype state:
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
-- Buy-box persistence working: one saved buy box per saved search, shown on both saved-search and listing-detail pages
-- Investment analyzer prototype in place: dedicated underwriting page for all active listings in a saved search
+- Buy-box persistence working: one saved buy box per saved search, now run from the combined listing-analysis workspace and shown on listing-detail pages
+- Listing Analysis workspace in place: buy-box screening and investment underwriting now run together for all active listings in a saved search
+- Combined analysis verdicts working: each active listing can be grouped as `Strong`, `Review`, or `Reject` based on buy-box result plus underwriting result
 - Underwriting persistence working: saved-search defaults plus listing-level rent overrides
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
@@ -60,10 +61,10 @@ Current prototype state:
 - Saves a screenshot and HTML snapshot on failure
 - Saves JSON output that includes the search criteria used for the run
 - Automatically upserts listings into Supabase after a successful scrape when local Supabase credentials are present
-- Serves a local website for browsing active listings and running buy-box filters
+- Serves a local website for browsing active listings and running combined listing analysis
 - Supports an AI interpretation goal for fuzzy listing-description criteria such as secondary suite potential
 - Supports targeted retry of only sparse listing details instead of forcing a full rerun
-- Supports a dedicated saved-search underwriting page with grouped listing comparison and computed investment metrics
+- Supports a dedicated saved-search listing-analysis page with buy-box controls, grouped listing comparison, and computed investment metrics
 - Supports listing-specific rent overrides that feed the underwriting table and listing-detail page
 - Supports CMHC market-reference matching for market rent and vacancy baselines
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
@@ -267,17 +268,19 @@ Current website scope:
 - listing detail page with photo gallery and richer scraped fields
 - direct market context links from the dashboard
 - dashboard `Markets analyzed` panel listing unique markets rather than only saved searches
-- buy-box workspace with:
-  - all scraped listings
-  - structured filters
+- saved-search detail page focused on scraped inventory plus an `Analyze Listings` entry point
+- listing-analysis workspace with:
+  - buy-box screening controls
   - AI interpretation goal
-  - `matched`, `maybe`, and `unmatched` result buckets
-- saved buy-box summary showing the currently persisted structured and AI criteria
+  - saved-search underwriting assumptions
+  - source controls for market rent, vacancy, utilities, and insurance
+  - combined `Strong`, `Review`, and `Reject` final verdicts
+- saved buy-box summary showing the currently persisted structured and AI criteria where relevant
 - buy-box verdict and AI reasoning on the listing-detail page
-- investment analyzer page with:
+- listing-analysis page with:
   - all active listings underwritten by default
-  - grouping into `likely`, `maybe`, and `unlikely`
-  - sorting within each bucket by strongest monthly cash flow first
+  - grouping by combined buy-box plus underwriting verdict
+  - sorting within each group by strongest monthly cash flow first
   - saved-search underwriting defaults
   - local source controls for market rent, vacancy, utilities, and insurance
   - AI rent preview and `Use AI` flow inside the `Market Rent Monthly` card
@@ -321,8 +324,8 @@ The intended product direction is:
 2. scrape all active listings matching that saved search
 3. store both the current listing state and scrape history
 4. show current active listings in a local application
-5. evaluate those listings against a persisted buy box
-6. underwrite promising listings with investment metrics
+5. evaluate those listings in one combined buy-box plus underwriting workspace
+6. review final `Strong`, `Review`, and `Reject` analysis buckets
 7. later add review workflow, market analysis, notes, shortlist behavior, and explicit run comparison
 
 Important scope clarifications:
@@ -331,9 +334,10 @@ Important scope clarifications:
 - the current near-term goal is to finish a clearer first full prototype of the listing-analysis workflow within a selected market
 - broader market fundamentals analysis is a later product area, but the roadmap now explicitly leaves room for a future market analyzer
 
-## Investment Analyzer Direction
+## Listing Analysis Direction
 
-The next major product area is a buy-and-hold investment analyzer layered on top of scraped listings.
+The next major product area is a buy-and-hold listing-analysis workspace layered on top of scraped listings.
+This workspace now combines buy-box screening with underwriting instead of requiring the user to run one workflow and then another.
 
 Locked product decisions:
 
@@ -358,6 +362,7 @@ Planning guidance:
 
 - cash flow is the backbone of the analyzer
 - the product should distinguish canonical metrics from heuristic rules
+- buy-box and underwriting results should be merged into a practical final verdict, currently `Strong`, `Review`, or `Reject`
 - long-term metrics like appreciation, IRR, and equity multiple should be phase 2+ work after the base underwriting engine is stable
 - future market context should support items like rent growth, appreciation, population growth, job growth, household income, supply, and liquidity
 
@@ -387,7 +392,7 @@ See [PRODUCT_INSPIRATION.md](/Users/georgia/Projects/simple realtor.ca scraper p
 
 Highest-value next work from the current state:
 
-1. tighten the investment-analyzer UI so active source modes and listing-level smart overrides are obvious without opening every listing
+1. tighten the listing-analysis UI so active source modes and listing-level smart overrides are obvious without opening every listing
 2. keep `Vacancy %` as `manual` plus market-stats-backed input, and make that source choice clearer in the UI
 3. improve the saved-search and listing-detail UI so incomplete data, missing details, and next actions are easier to interpret
 4. add workflow states such as shortlist / ignore / notes for reviewed listings
@@ -410,7 +415,7 @@ What is now done:
 Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
-- polish the underwriting assumption UX, especially the visibility of per-listing smart overrides versus shared defaults
+- polish the listing-analysis assumption UX, especially the visibility of per-listing smart overrides versus shared defaults
 - improve the saved-search and listing-detail UI so missing detail fields and incomplete underwriting inputs are clearer
 - keep vacancy source modes tied to market stats plus manual editing rather than adding an AI vacancy path
 - add simple listing workflow actions such as shortlist / ignore / notes

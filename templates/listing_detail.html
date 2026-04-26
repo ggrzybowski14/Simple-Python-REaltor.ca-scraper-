@@ -5,7 +5,7 @@
 {% block content %}
 <div class="detail-back-row">
   {% if return_to == 'investment_analyzer' %}
-  <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to underwriting</a>
+  <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to listing analysis</a>
   {% endif %}
   <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}{% if back_query %}?{{ back_query }}{% endif %}">Back to saved search</a>
 </div>

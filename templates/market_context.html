@@ -14,7 +14,7 @@
     <div class="card-actions">
       {% if saved_search %}
       <a class="button-secondary button-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
-      <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to underwriting</a>
+      <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Back to listing analysis</a>
       {% endif %}
     </div>
   </div>
