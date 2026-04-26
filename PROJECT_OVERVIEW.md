@@ -24,6 +24,7 @@ The codebase now has three working layers:
 The codebase now also has the first real underwriting layer:
 
 - a saved-search listing-analysis page for all active listings
+- explicit setup-and-run listing-analysis workflow: confirm buy-box criteria and underwriting defaults, then run or rerun analysis
 - combined buy-box plus underwriting final verdicts
 - persisted underwriting defaults at the saved-search level
 - listing-level rent overrides
@@ -93,6 +94,7 @@ The local website currently provides:
 - collapsible recent-run history
 - persisted buy-box settings per saved search
 - listing-analysis page where buy-box screening and underwriting assumptions run together
+- listing-analysis page now starts in a setup state and only fills the results table after the user presses `Run analysis`
 - targeted retry of sparse listing details
 - investment analyzer route retained as the listing-analysis URL for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
@@ -139,9 +141,10 @@ The intended product direction is now:
 2. scrape all active listings matching that market search
 3. store current listing state plus scrape history
 4. review listings in the local website
-5. run buy-box screening and underwriting together against active listings
-6. review combined `Strong`, `Review`, and `Reject` results
-7. later add listing workflow states, market context, and projection tools
+5. confirm buy-box screening criteria and underwriting defaults in the listing-analysis workspace
+6. run or rerun analysis to generate the active results table
+7. review combined `Strong`, `Review`, and `Reject` results
+8. later add listing workflow states, market context, and projection tools
 
 The product remains single-user and local-first for now.
 
@@ -181,6 +184,7 @@ The immediate goal is:
 What is already implemented:
 
 - `/saved-searches/<id>/investment-analyzer`
+- setup-first listing-analysis workflow where source-mode changes save independently and table results update only after `Run analysis` / `Rerun analysis`
 - buy-box controls on the listing-analysis page
 - combined buy-box plus underwriting verdicts for all active listings
 - sorting within each combined result group by strongest performance first
@@ -188,6 +192,7 @@ What is already implemented:
 - listing-level rent overrides
 - listing-detail underwriting section
 - source-aware market rent and vacancy controls
+- same-value source switching for rent and vacancy, so manual and CMHC modes can be selected even when their numeric values match
 - source-aware utilities and insurance controls
 - BC-wide rule-based utilities and insurance heuristics
 - listing-level smart maintenance and CapEx heuristic overrides
@@ -256,6 +261,7 @@ The following should be treated as current working assumptions unless the user e
 - appreciation charts should only render when we have a real source series
 - smaller markets such as `Duncan` should show a clean empty state instead of borrowing a bad appreciation proxy
 - listing workflow clarity is still a higher priority than broad new product surface
+- the result-label model is unsettled: `Final` may become the primary visible rating, with buy-box fit and underwriting strength demoted to supporting context
 
 ### Strategy Scope For V1
 
@@ -522,7 +528,14 @@ The current page structure is:
 - `Assumptions`
   editable underwriting assumptions with source labels and source-mode controls
 - `Analysis Results`
-  a combined table that shows buy-box result, underwriting metrics, underwriting verdict, and final result
+  a combined table that appears after the user runs analysis and shows buy-box result, underwriting metrics, underwriting verdict, and final result
+
+Workflow behavior:
+
+- opening `Analyze Listings` shows setup controls first
+- changing source modes such as manual, CMHC, AI, rule-based utilities/insurance, or smart reserves saves that setting but does not automatically rewrite the visible analysis table
+- pressing `Run analysis` or `Rerun analysis` saves the current buy-box criteria and saved-search defaults together, snapshots the current listing-level overrides, and refreshes the table
+- the current implementation keeps the last run snapshot in the local Flask process, matching the app's current local-first prototype posture
 
 - `Cash Flow`
   monthly rent, monthly expenses, mortgage, monthly cash flow
@@ -545,6 +558,11 @@ Current final result buckets:
   buy box is maybe, underwriting is borderline, or the signal is mixed
 - `Reject`
   buy box is unlikely or underwriting is weak
+
+Open UI question:
+
+- the current table exposes `Final`, `Buy Box`, and `Underwriting`, which may be too many overlapping decision labels
+- the next UI pass should consider making `Final` the dominant or only visible rating and moving buy-box/underwriting detail into secondary context
 
 ## Product Decisions Locked In
 
@@ -600,6 +618,7 @@ Completed:
 - listing photo gallery
 - preserved buy-box query state when navigating into and back out of a listing
 - saved buy-box persistence and listing-detail verdict display
+- explicit setup-to-analysis handoff from saved-search review into listing analysis
 
 Still rough:
 
@@ -607,6 +626,7 @@ Still rough:
 - run-management UX is basic
 - there is no persistent background worker or polished queue
 - active-set churn is still hard to interpret when Realtor result counts fluctuate between runs
+- listing-analysis run snapshots are currently local-process state, not durable database records
 
 ### Phase 3: Buy Box And Listing Analysis
 
@@ -623,10 +643,12 @@ Completed:
 - stricter detached-house filtering in app logic so duplex and townhouse rows are excluded from `house`
 - buy-box controls moved into the listing-analysis workspace
 - combined `Strong`, `Review`, and `Reject` verdicts based on buy-box plus underwriting
+- results table now updates only through an explicit `Run analysis` / `Rerun analysis` action
 
 Next expansion area:
 
-- polish the combined results table and add explicit listing workflow states such as shortlist, ignore, and notes
+- simplify the combined results table language, especially whether to keep separate visible `Final`, `Buy Box`, and `Underwriting` columns
+- add explicit listing workflow states such as shortlist, ignore, and notes
 
 ### Phase 4: Investment Analyzer V1
 
@@ -643,6 +665,8 @@ Scope:
 Completed or in progress within this phase:
 
 - saved-search underwriting defaults
+- source-mode controls that preserve manual versus CMHC choices even when values match
+- setup-first analysis flow that prevents source-mode changes from automatically rerunning the table
 - listing-level rent overrides
 - CMHC-backed vacancy and rent defaults
 - AI-assisted listing-level rent application
@@ -715,14 +739,17 @@ The highest-value build order from here is:
 
 The next concrete goal for the project is:
 
-- make the underwriting UX clearer now that multiple assumption source modes and listing-level overrides exist
+- make the analysis-results UX clearer now that the table shows `Final`, buy-box fit, and underwriting strength together
+- decide whether the product should collapse toward one dominant final rating and treat buy-box/underwriting detail as supporting context
+- keep making the underwriting UX clearer now that multiple assumption source modes and listing-level overrides exist
 - keep stabilizing listing ingestion enough that underwriting can trust the active result set
 
 The next coding session should therefore start by answering:
 
-1. how should the analyzer page communicate smart listing overrides without forcing constant navigation into listing detail
-2. how should the UI communicate that vacancy is stats-backed when available and otherwise manually entered
-3. do we need one more scraper reliability pass before relying more heavily on the active set
+1. should the table keep separate `Final`, `Buy Box`, and `Underwriting` columns, or should `Final` become the main visible rating with details collapsed or secondary
+2. how should the analyzer page communicate smart listing overrides without forcing constant navigation into listing detail
+3. how should the UI communicate that vacancy is stats-backed when available and otherwise manually entered
+4. do we need one more scraper reliability pass before relying more heavily on the active set
 
 ## Current Risks And Constraints
 

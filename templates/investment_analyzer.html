@@ -35,7 +35,7 @@
         >
         <button
           type="submit"
-          formaction="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}"
+          formaction="{{ url_for('use_manual_vacancy_default', saved_search_id=saved_search.id) }}"
           class="mini-button {% if field.source == 'manual' %}toggle-active{% endif %}"
         >
           Apply manual
@@ -349,40 +349,32 @@
       Run the buy box and underwriting assumptions together against every active scraped listing.
     </p>
     <p class="hero-meta-line">
-      {% if buy_box.applied %}
+      {% if not analysis_has_run %}
+      Confirm the setup below, then run analysis to populate the results table.
+      {% elif analysis_buy_box.applied %}
       Rows are grouped by the combined analysis result, then sorted by strongest monthly cash flow within each group.
       {% else %}
       No saved buy box is active, so the table is using underwriting results only.
       {% endif %}
     </p>
   </div>
-  <div class="hero-metrics">
+  <div class="hero-metrics hero-metrics-single">
     <div class="metric-card">
       <span class="metric-label">Active Listings</span>
-      <strong>{{ underwriting_rows|length }}</strong>
-    </div>
-    <div class="metric-card">
-      <span class="metric-label">Market Rent Default</span>
-      <strong>{{ investment_defaults.market_rent_monthly.value|currency }}</strong>
-    </div>
-    <div class="metric-card">
-      <span class="metric-label">Vacancy</span>
-      <strong>{{ investment_defaults.vacancy_percent.value|percent1 }}</strong>
-    </div>
-    <div class="metric-card">
-      <span class="metric-label">Interest Rate</span>
-      <strong>{{ investment_defaults.interest_rate_percent.value|percent1 }}</strong>
+      <strong>{{ active_listings|length }}</strong>
     </div>
   </div>
 </section>
+
+<form method="post" action="{{ url_for('run_listing_analysis', saved_search_id=saved_search.id) }}">
+<input type="hidden" name="apply_buy_box" value="1">
 
 <section class="panel panel-form lower-grid">
   <div class="panel-header">
     <p class="eyebrow">Buy Box</p>
     <h2>Screening criteria</h2>
   </div>
-  <form method="get" action="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}" class="scrape-form analysis-buy-box-form">
-    <input type="hidden" name="apply_buy_box" value="1">
+  <div class="scrape-form analysis-buy-box-form">
     <label>
       <span>Max price</span>
       <input type="number" name="buy_box_max_price" min="0" step="1000" value="{{ buy_box.max_price or '' }}">
@@ -413,24 +405,11 @@
       >{{ buy_box.ai_goal_raw }}</textarea>
     </label>
     <div class="card-actions">
-      <button type="submit" class="button-primary">Run analysis</button>
       {% if buy_box.applied %}
       <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear buy box</a>
       {% endif %}
     </div>
-  </form>
-  {% if buy_box.applied %}
-  <div class="buy-box-ai-summary analysis-summary">
-    <p class="eyebrow">Current Buy Box</p>
-    <p class="meta-line">
-      Max price: {{ ("$" ~ "{:,}".format(buy_box.max_price)) if buy_box.max_price is not none else "Any" }} |
-      Beds: {{ buy_box.beds_min if buy_box.beds_min is not none else "Any" }}+ |
-      Type: {{ buy_box.property_type|title if buy_box.property_type else "Any" }}
-    </p>
-    <p class="meta-line">Keywords: {{ buy_box.required_keywords_raw if buy_box.required_keywords_raw else "None" }}</p>
-    <p class="meta-line">AI goal: {{ buy_box.ai_goal_raw if buy_box.ai_goal_raw else "None saved" }}</p>
   </div>
-  {% endif %}
 </section>
 
 <section class="panel lower-grid">
@@ -440,7 +419,6 @@
   </div>
   {% set purchase_keys = ['down_payment_percent', 'interest_rate_percent', 'amortization_years', 'closing_cost_percent'] %}
   {% set ongoing_cost_keys = ['vacancy_percent', 'maintenance_percent_of_rent', 'capex_percent_of_rent', 'management_percent_of_rent', 'other_monthly', 'insurance_monthly', 'utilities_monthly'] %}
-  <form method="post" action="{{ url_for('save_investment_analyzer_defaults', saved_search_id=saved_search.id) }}">
     <section class="assumptions-section">
       <div class="assumptions-section-header">
         <p class="eyebrow">Purchase</p>
@@ -506,7 +484,7 @@
               type="number"
               name="market_rent_monthly"
               step="{{ rent_field.input_step or '0.1' }}"
-              value="{{ '' if rent_field.value is none else rent_field.value }}"
+              value="{% if rent_field.source == 'manual' %}{{ '' if rent_field.value is none else rent_field.value }}{% else %}{{ '' if rent_field.manual_value is not defined or rent_field.manual_value is none else rent_field.manual_value }}{% endif %}"
             >
             <button
               type="submit"
@@ -605,16 +583,20 @@
       </section>
     </section>
     <div class="card-actions">
-      <button type="submit" class="button-primary">Save assumptions</button>
+      <button type="submit" class="button-primary">{{ 'Rerun analysis' if analysis_has_run else 'Run analysis' }}</button>
     </div>
-  </form>
 </section>
+</form>
 
 <section class="panel lower-grid">
   <div class="panel-header">
     <p class="eyebrow">Analysis Results</p>
-    <h2>Buy box plus underwriting</h2>
+    <h2>{% if analysis_has_run %}Buy box plus underwriting{% else %}Ready to run{% endif %}</h2>
   </div>
+  {% if analysis_has_run and analysis_ran_at %}
+  <p class="meta-line">Last run: {{ analysis_ran_at }}. Changes above are saved separately and appear here after rerunning analysis.</p>
+  {% endif %}
+  {% if analysis_has_run %}
   <div class="table-legend">
     <span class="pill verdict-strong">Strong</span>
     <span class="pill verdict-review">Review</span>
@@ -622,12 +604,13 @@
     <span class="pill verdict-promising">Promising</span>
     <span class="pill verdict-borderline">Borderline</span>
     <span class="pill verdict-weak">Weak</span>
-    {% if buy_box.applied %}
+    {% if analysis_buy_box.applied %}
     <span class="pill status-succeeded">Likely</span>
     <span class="pill ai-pill ai-maybe">Maybe</span>
     <span class="pill status-failed">Unlikely</span>
     {% endif %}
   </div>
+  {% endif %}
   {% if underwriting_rows %}
   <div class="table-wrap">
     <table class="data-table underwriting-table">
@@ -747,7 +730,29 @@
     </table>
   </div>
   {% else %}
+  {% if analysis_has_run %}
   <p class="empty-state">No active listings are available to underwrite yet.</p>
+  {% else %}
+  <p class="empty-state">Confirm the buy box and saved-search defaults above, then run analysis to fill this table.</p>
+  {% endif %}
   {% endif %}
 </section>
+
+<script>
+  (() => {
+    const key = "listingAnalysisScrollY:{{ saved_search.id }}";
+    const savedY = sessionStorage.getItem(key);
+    if (savedY !== null) {
+      sessionStorage.removeItem(key);
+      requestAnimationFrame(() => window.scrollTo(0, Number(savedY) || 0));
+    }
+
+    document.addEventListener("submit", (event) => {
+      const submitter = event.submitter;
+      if (submitter && submitter.classList.contains("mini-button")) {
+        sessionStorage.setItem(key, String(window.scrollY));
+      }
+    });
+  })();
+</script>
 {% endblock %}

@@ -20,10 +20,11 @@ Current prototype state:
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
 - Buy-box persistence working: one saved buy box per saved search, now run from the combined listing-analysis workspace and shown on listing-detail pages
 - Listing Analysis workspace in place: buy-box screening and investment underwriting now run together for all active listings in a saved search
+- Listing Analysis workflow now uses an explicit setup-and-run step: users confirm buy-box criteria and saved-search defaults, then press `Run analysis` or `Rerun analysis` to refresh the table
 - Combined analysis verdicts working: each active listing can be grouped as `Strong`, `Review`, or `Reject` based on buy-box result plus underwriting result
 - Underwriting persistence working: saved-search defaults plus listing-level rent overrides
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
-- CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values
+- CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values, including same-value source switches
 - Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
 - First structured market layer working: `population`, `population growth`, `unemployment`, and `median household income` can now be stored per market and rendered on the website
 - Broader BC structured market coverage working: a bulk StatCan import path can now load those four structured metrics for matched BC markets instead of keeping the market layer limited to hand-seeded examples
@@ -39,7 +40,7 @@ Current prototype state:
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
 - Current active step: audit CMHC secondary-rental tables for usable detached-house coverage and keep expanding the market context layer where official data is publishable
-- Current UI priority: keep improving clarity in the underwriting workflow rather than broadening the scraper again immediately
+- Current UI priority: simplify the listing-analysis results language; consider whether the table should emphasize only the final decision rating rather than showing separate `Final`, `Buy Box`, and `Underwriting` labels
 
 ## What It Does Today
 
@@ -65,6 +66,7 @@ Current prototype state:
 - Supports an AI interpretation goal for fuzzy listing-description criteria such as secondary suite potential
 - Supports targeted retry of only sparse listing details instead of forcing a full rerun
 - Supports a dedicated saved-search listing-analysis page with buy-box controls, grouped listing comparison, and computed investment metrics
+- Supports an explicit listing-analysis setup state before results are generated, so changing assumptions does not automatically rewrite the table until the user reruns analysis
 - Supports listing-specific rent overrides that feed the underwriting table and listing-detail page
 - Supports CMHC market-reference matching for market rent and vacancy baselines
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
@@ -274,6 +276,8 @@ Current website scope:
   - AI interpretation goal
   - saved-search underwriting assumptions
   - source controls for market rent, vacancy, utilities, and insurance
+  - explicit `Run analysis` / `Rerun analysis` action that saves buy-box criteria and underwriting defaults together before refreshing results
+  - a setup state that hides the results table until analysis has been run
   - combined `Strong`, `Review`, and `Reject` final verdicts
 - saved buy-box summary showing the currently persisted structured and AI criteria where relevant
 - buy-box verdict and AI reasoning on the listing-detail page
@@ -283,6 +287,7 @@ Current website scope:
   - sorting within each group by strongest monthly cash flow first
   - saved-search underwriting defaults
   - local source controls for market rent, vacancy, utilities, and insurance
+  - source-mode changes that persist independently without automatically rerunning the visible results table
   - AI rent preview and `Use AI` flow inside the `Market Rent Monthly` card
   - BC-wide rule-based utilities and insurance defaults
   - separate `Apply smart maintenance` and `Apply smart CapEx` actions that write listing-level reserve overrides
@@ -315,6 +320,7 @@ Current website limitations:
 - CMHC rent data is still incomplete for detached-house coverage in BC, so house searches can still require manual or AI adjustment even after the new townhouse / condo groundwork
 - utilities and insurance rule-based estimates are BC-wide heuristics, not market-specific estimates
 - smart maintenance and smart CapEx are heuristic listing-level overrides, not full asset-condition models
+- the results table currently exposes several related labels (`Final`, buy-box fit, and underwriting strength), and the next UI pass should decide whether to collapse those into a simpler final-rating presentation
 
 ## Product Direction
 
@@ -325,8 +331,9 @@ The intended product direction is:
 3. store both the current listing state and scrape history
 4. show current active listings in a local application
 5. evaluate those listings in one combined buy-box plus underwriting workspace
-6. review final `Strong`, `Review`, and `Reject` analysis buckets
-7. later add review workflow, market analysis, notes, shortlist behavior, and explicit run comparison
+6. explicitly run or rerun analysis after confirming buy-box criteria and saved-search defaults
+7. review final `Strong`, `Review`, and `Reject` analysis buckets
+8. later add review workflow, market analysis, notes, shortlist behavior, and explicit run comparison
 
 Important scope clarifications:
 
@@ -363,6 +370,7 @@ Planning guidance:
 - cash flow is the backbone of the analyzer
 - the product should distinguish canonical metrics from heuristic rules
 - buy-box and underwriting results should be merged into a practical final verdict, currently `Strong`, `Review`, or `Reject`
+- current table labels are intentionally under review; a future pass may make `Final` the primary or only prominent rating and move buy-box/underwriting detail into supporting context
 - long-term metrics like appreciation, IRR, and equity multiple should be phase 2+ work after the base underwriting engine is stable
 - future market context should support items like rent growth, appreciation, population growth, job growth, household income, supply, and liquidity
 
@@ -392,12 +400,13 @@ See [PRODUCT_INSPIRATION.md](/Users/georgia/Projects/simple realtor.ca scraper p
 
 Highest-value next work from the current state:
 
-1. tighten the listing-analysis UI so active source modes and listing-level smart overrides are obvious without opening every listing
-2. keep `Vacancy %` as `manual` plus market-stats-backed input, and make that source choice clearer in the UI
-3. improve the saved-search and listing-detail UI so incomplete data, missing details, and next actions are easier to interpret
-4. add workflow states such as shortlist / ignore / notes for reviewed listings
-5. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
-6. continue scraper hardening only where it directly supports the prototype workflow
+1. tighten the results table language; consider whether to emphasize only a single final rating and reduce visible `Buy Box` / `Underwriting` label noise
+2. keep improving source-mode clarity so active modes and listing-level smart overrides are obvious without opening every listing
+3. keep `Vacancy %` as `manual` plus market-stats-backed input, and keep that source choice clear in the UI
+4. improve the saved-search and listing-detail UI so incomplete data, missing details, and next actions are easier to interpret
+5. add workflow states such as shortlist / ignore / notes for reviewed listings
+6. add clearer run-to-run comparison so `new in update` can be interpreted against collected-set churn
+7. continue scraper hardening only where it directly supports the prototype workflow
 
 ## Next Active Work
 
@@ -415,6 +424,7 @@ What is now done:
 Remaining near-term follow-up:
 
 - prove the inactive-listing transition with a controlled rerun for the same saved-search context
+- polish the listing-analysis results UX, especially whether `Final`, buy-box fit, and underwriting strength should remain separate visible columns
 - polish the listing-analysis assumption UX, especially the visibility of per-listing smart overrides versus shared defaults
 - improve the saved-search and listing-detail UI so missing detail fields and incomplete underwriting inputs are clearer
 - keep vacancy source modes tied to market stats plus manual editing rather than adding an AI vacancy path

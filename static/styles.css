@@ -118,6 +118,11 @@ code {
   align-content: start;
 }
 
+.hero-metrics-single {
+  grid-template-columns: minmax(12rem, 18rem);
+  justify-content: end;
+}
+
 .metric-card {
   border-radius: 20px;
   padding: 1rem 1.1rem;
@@ -335,14 +340,23 @@ code {
 }
 
 .analysis-buy-box-form {
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: start;
 }
 
+.analysis-buy-box-form label:nth-of-type(1),
+.analysis-buy-box-form label:nth-of-type(2),
+.analysis-buy-box-form label:nth-of-type(3) {
+  grid-column: span 2;
+}
+
 .analysis-buy-box-form label:nth-of-type(4),
-.analysis-buy-box-form label:nth-of-type(5),
-.analysis-buy-box-form .card-actions {
+.analysis-buy-box-form label:nth-of-type(5) {
   grid-column: span 3;
+}
+
+.analysis-buy-box-form .card-actions {
+  grid-column: span 6;
 }
 
 .scrape-form label,
@@ -1228,6 +1242,9 @@ textarea {
 
   .analysis-buy-box-form label:nth-of-type(4),
   .analysis-buy-box-form label:nth-of-type(5),
+  .analysis-buy-box-form label:nth-of-type(1),
+  .analysis-buy-box-form label:nth-of-type(2),
+  .analysis-buy-box-form label:nth-of-type(3),
   .analysis-buy-box-form .card-actions {
     grid-column: auto;
   }

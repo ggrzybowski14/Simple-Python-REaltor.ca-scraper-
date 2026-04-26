@@ -248,7 +248,15 @@ def hydrate_defaults_with_market_data(
 
     average_rent = reference.get("average_rent_monthly")
     vacancy_rate = reference.get("vacancy_rate_percent")
-    if hydrated["market_rent_monthly"].get("value") is None and average_rent is not None:
+    rent_source = hydrated["market_rent_monthly"].get("source")
+    rent_value = hydrated["market_rent_monthly"].get("value")
+    rent_help_text = hydrated["market_rent_monthly"].get("help_text")
+    should_hydrate_rent = (
+        rent_value is None
+        and rent_source == "manual"
+        and rent_help_text == "Single rent estimate for this saved search in V1."
+    )
+    if should_hydrate_rent and average_rent is not None:
         hydrated["market_rent_monthly"]["value"] = float(average_rent)
         hydrated["market_rent_monthly"]["source"] = source_label
         hydrated["market_rent_monthly"]["confidence"] = confidence
@@ -256,7 +264,18 @@ def hydrate_defaults_with_market_data(
             f"Hydrated from CMHC market reference for {market_match.get('matched_market_name')}."
         )
         hydrated["market_rent_monthly"]["help_url"] = reference.get("source_url")
-    if hydrated["vacancy_percent"].get("value") in {None, 4.0} and vacancy_rate is not None:
+    vacancy_source = hydrated["vacancy_percent"].get("source")
+    vacancy_value = hydrated["vacancy_percent"].get("value")
+    vacancy_help_text = hydrated["vacancy_percent"].get("help_text")
+    should_hydrate_vacancy = (
+        vacancy_value is None
+        or (
+            vacancy_value == 4.0
+            and vacancy_source == "manual"
+            and vacancy_help_text == "Editable saved-search vacancy assumption for this market."
+        )
+    )
+    if should_hydrate_vacancy and vacancy_rate is not None:
         hydrated["vacancy_percent"]["value"] = float(vacancy_rate)
         hydrated["vacancy_percent"]["source"] = source_label
         hydrated["vacancy_percent"]["confidence"] = confidence

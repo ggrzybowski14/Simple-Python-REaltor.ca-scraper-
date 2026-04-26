@@ -36,6 +36,7 @@ from investment import (
     format_currency,
     format_percent,
     merge_investment_defaults,
+    parse_form_number,
 )
 from market_data import (
     build_market_profile_from_saved_search,
@@ -61,6 +62,7 @@ SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
 AI_BUY_BOX_CACHE: dict[str, dict[str, str]] = {}
 AI_RENT_PREVIEWS: dict[int, dict[str, Any]] = {}
+LISTING_ANALYSIS_RUNS: dict[int, dict[str, Any]] = {}
 
 MARKET_METRIC_DEFINITIONS = {
     "population": {"label": "Population", "format": "integer"},
@@ -713,6 +715,46 @@ def build_underwriting_rows(
     )
 
 
+def get_listing_analysis_state(saved_search_id: int) -> dict[str, Any] | None:
+    state = LISTING_ANALYSIS_RUNS.get(saved_search_id)
+    return state if isinstance(state, dict) else None
+
+
+def set_listing_analysis_state(
+    saved_search_id: int,
+    *,
+    buy_box: dict[str, Any],
+    defaults_snapshot: dict[str, dict[str, Any]],
+    overrides_by_listing_id: dict[int, dict[str, Any]],
+) -> None:
+    LISTING_ANALYSIS_RUNS[saved_search_id] = {
+        "buy_box": buy_box,
+        "defaults_snapshot": defaults_snapshot,
+        "overrides_by_listing_id": {
+            str(listing_id): overrides
+            for listing_id, overrides in overrides_by_listing_id.items()
+        },
+        "ran_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+
+
+def clear_listing_analysis_state(saved_search_id: int) -> None:
+    LISTING_ANALYSIS_RUNS.pop(saved_search_id, None)
+
+
+def normalize_analysis_state_overrides(state: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    raw_overrides = (state or {}).get("overrides_by_listing_id")
+    if not isinstance(raw_overrides, dict):
+        return {}
+    normalized: dict[int, dict[str, Any]] = {}
+    for listing_id, overrides in raw_overrides.items():
+        normalized_listing_id = normalize_listing_id(listing_id)
+        if normalized_listing_id is None or not isinstance(overrides, dict):
+            continue
+        normalized[normalized_listing_id] = overrides
+    return normalized
+
+
 def hydrate_defaults_for_saved_search(
     config: SupabaseReadConfig,
     saved_search: dict[str, Any],
@@ -1093,6 +1135,7 @@ def create_app() -> Flask:
             abort(404)
         if flask_request.args.get("clear_buy_box"):
             clear_saved_buy_box(config, saved_search)
+            clear_listing_analysis_state(saved_search_id)
             return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id))
         active_listings = fetch_active_listings(config, saved_search_id)
         defaults_snapshot, market_match = hydrate_defaults_for_saved_search(config, saved_search)
@@ -1102,10 +1145,16 @@ def create_app() -> Flask:
             [listing["listing_id"] for listing in active_listings],
         )
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
-        if flask_request.args.get("apply_buy_box"):
-            persist_saved_buy_box(config, saved_search, buy_box)
-            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, analyzed=1))
-        buy_box_results_by_listing_id = build_buy_box_result_lookup(active_listings, buy_box)
+        analysis_state = get_listing_analysis_state(saved_search_id)
+        analysis_has_run = analysis_state is not None
+        analysis_buy_box = analysis_state.get("buy_box", {}) if analysis_state else {}
+        analysis_defaults = analysis_state.get("defaults_snapshot", {}) if analysis_state else {}
+        analysis_overrides_by_listing_id = normalize_analysis_state_overrides(analysis_state)
+        buy_box_results_by_listing_id = (
+            build_buy_box_result_lookup(active_listings, analysis_buy_box)
+            if analysis_has_run
+            else {}
+        )
         smart_maintenance_active = any(
             isinstance(snapshot, dict) and snapshot.get("maintenance_percent_source") == "smart_listing_estimate"
             for snapshot in overrides_by_listing_id.values()
@@ -1114,11 +1163,15 @@ def create_app() -> Flask:
             isinstance(snapshot, dict) and snapshot.get("capex_percent_source") == "smart_listing_estimate"
             for snapshot in overrides_by_listing_id.values()
         )
-        underwriting_rows = build_underwriting_rows(
-            active_listings,
-            defaults_snapshot,
-            overrides_by_listing_id=overrides_by_listing_id,
-            buy_box_results_by_listing_id=buy_box_results_by_listing_id,
+        underwriting_rows = (
+            build_underwriting_rows(
+                active_listings,
+                analysis_defaults,
+                overrides_by_listing_id=analysis_overrides_by_listing_id,
+                buy_box_results_by_listing_id=buy_box_results_by_listing_id,
+            )
+            if analysis_has_run
+            else []
         )
         utilities_rule_based_estimate = estimate_rule_based_utilities_monthly(saved_search)
         insurance_rule_based_estimate = estimate_rule_based_insurance_monthly(saved_search)
@@ -1129,6 +1182,9 @@ def create_app() -> Flask:
             underwriting_rows=underwriting_rows,
             investment_defaults=defaults_snapshot,
             buy_box=buy_box,
+            analysis_has_run=analysis_has_run,
+            analysis_ran_at=analysis_state.get("ran_at") if analysis_state else None,
+            analysis_buy_box=analysis_buy_box,
             market_match=market_match,
             default_rent_ai_prompt=build_rent_ai_prompt_text(),
             ai_rent_preview=AI_RENT_PREVIEWS.get(saved_search_id),
@@ -1143,6 +1199,31 @@ def create_app() -> Flask:
                 if normalize_listing_id(listing.get("listing_id")) is not None
             },
         )
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/run", methods=["POST"])
+    def run_listing_analysis(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        existing_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
+        defaults_snapshot = build_defaults_snapshot_from_form(flask_request.form, existing_defaults=existing_defaults)
+        persist_saved_search_investment_defaults(config, saved_search_id, defaults_snapshot)
+        buy_box = build_buy_box_criteria(flask_request.form, saved_search)
+        persist_saved_buy_box(config, saved_search, buy_box)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        overrides_by_listing_id = fetch_listing_investment_overrides(
+            config,
+            saved_search_id,
+            [listing["listing_id"] for listing in active_listings],
+        )
+        set_listing_analysis_state(
+            saved_search_id,
+            buy_box=buy_box,
+            defaults_snapshot=defaults_snapshot,
+            overrides_by_listing_id=overrides_by_listing_id,
+        )
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, analyzed=1))
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/defaults", methods=["POST"])
     def save_investment_analyzer_defaults(saved_search_id: int) -> Any:
@@ -1165,6 +1246,7 @@ def create_app() -> Flask:
         existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
         updated_defaults = merge_investment_defaults(existing_defaults)
         updated_defaults["market_rent_monthly"]["value"] = float(manual_rent) if manual_rent is not None else None
+        updated_defaults["market_rent_monthly"]["manual_value"] = float(manual_rent) if manual_rent is not None else None
         updated_defaults["market_rent_monthly"]["source"] = "manual"
         updated_defaults["market_rent_monthly"]["confidence"] = "medium"
         updated_defaults["market_rent_monthly"]["help_text"] = "Manual saved-search rent value."
@@ -1187,6 +1269,9 @@ def create_app() -> Flask:
         if average_rent is None:
             return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_missing=1))
         updated_defaults = merge_investment_defaults(existing_defaults)
+        manual_rent = parse_optional_int(flask_request.form.get("market_rent_monthly"))
+        if manual_rent is not None:
+            updated_defaults["market_rent_monthly"]["manual_value"] = float(manual_rent)
         updated_defaults["market_rent_monthly"]["value"] = float(average_rent)
         updated_defaults["market_rent_monthly"]["source"] = (
             "cmhc_apartment_proxy" if market_match.get("property_type_mismatch") else f"cmhc_{market_match.get('match_type')}"
@@ -1220,6 +1305,23 @@ def create_app() -> Flask:
         updated_defaults["vacancy_percent"]["help_url"] = reference.get("source_url")
         persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, cmhc_vacancy_used=1))
+
+    @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-manual-vacancy", methods=["POST"])
+    def use_manual_vacancy_default(saved_search_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        manual_vacancy = parse_form_number(flask_request.form.get("vacancy_percent"))
+        existing_defaults = fetch_saved_search_investment_defaults(config, saved_search_id)
+        updated_defaults = merge_investment_defaults(existing_defaults)
+        updated_defaults["vacancy_percent"]["value"] = manual_vacancy
+        updated_defaults["vacancy_percent"]["source"] = "manual"
+        updated_defaults["vacancy_percent"]["confidence"] = "medium"
+        updated_defaults["vacancy_percent"]["help_text"] = "Manual saved-search vacancy value."
+        updated_defaults["vacancy_percent"]["help_url"] = None
+        persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
+        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, manual_vacancy_used=1))
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/use-manual-utilities", methods=["POST"])
     def use_manual_utilities_default(saved_search_id: int) -> Any:

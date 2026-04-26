@@ -145,6 +145,8 @@ def merge_investment_defaults(
                     "help_url": candidate.get("help_url") or definition["help_url"],
                 }
             )
+            if "manual_value" in candidate:
+                definition["manual_value"] = candidate.get("manual_value")
     return merged
 
 

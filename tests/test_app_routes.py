@@ -416,6 +416,7 @@ def test_market_appreciation_api_returns_preferred_payload(monkeypatch) -> None:
 
 
 def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch) -> None:
+    webapp.LISTING_ANALYSIS_RUNS.clear()
     monkeypatch.setattr(
         webapp,
         "get_supabase_read_config",
@@ -473,6 +474,8 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
         ),
     )
     monkeypatch.setattr(webapp, "fetch_listing_investment_overrides", lambda config, saved_search_id, listing_ids: {})
+    monkeypatch.setattr(webapp, "persist_saved_search_investment_defaults", lambda config, saved_search_id, defaults_snapshot: None)
+    monkeypatch.setattr(webapp, "persist_saved_buy_box", lambda config, saved_search, buy_box: None)
 
     client = webapp.app.test_client()
     response = client.get("/saved-searches/7/investment-analyzer")
@@ -481,7 +484,24 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
     body = response.get_data(as_text=True)
     assert "Victoria Houses" in body
     assert "Listing Analysis" in body
+    assert "Ready to run" in body
+    assert "Confirm the buy box and saved-search defaults above, then run analysis to fill this table." in body
+
+    response = client.post(
+        "/saved-searches/7/investment-analyzer/run",
+        data={
+            "apply_buy_box": "1",
+            "buy_box_max_price": "900000",
+            "buy_box_beds_min": "2",
+            "buy_box_property_type": "house",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
     assert "Buy box plus underwriting" in body
+    assert "Rerun analysis" in body
     assert "123 Example St" in body
 
 
@@ -665,6 +685,98 @@ def test_use_cmhc_vacancy_default_persists_updated_value(monkeypatch) -> None:
     defaults_snapshot = captured["defaults_snapshot"]
     assert defaults_snapshot["vacancy_percent"]["value"] == 3.1
     assert defaults_snapshot["vacancy_percent"]["source"] == "cmhc_exact"
+
+
+def test_use_manual_vacancy_default_persists_manual_source_even_when_value_matches_cmhc(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "location": "Victoria",
+            "property_type": "house",
+            "beds_min": 2,
+            "search_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search_investment_defaults",
+        lambda config, saved_search_id: {"vacancy_percent": {"value": 3.0, "source": "cmhc_exact"}},
+    )
+
+    def fake_persist(config, saved_search_id, defaults_snapshot):
+        captured["saved_search_id"] = saved_search_id
+        captured["defaults_snapshot"] = defaults_snapshot
+
+    monkeypatch.setattr(webapp, "persist_saved_search_investment_defaults", fake_persist)
+
+    client = webapp.app.test_client()
+    response = client.post("/saved-searches/7/investment-analyzer/use-manual-vacancy", data={"vacancy_percent": "3.0"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/saved-searches/7/investment-analyzer?manual_vacancy_used=1")
+    defaults_snapshot = captured["defaults_snapshot"]
+    assert defaults_snapshot["vacancy_percent"]["value"] == 3.0
+    assert defaults_snapshot["vacancy_percent"]["source"] == "manual"
+
+
+def test_use_cmhc_rent_preserves_entered_manual_rent_value(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "location": "Duncan",
+            "property_type": "house",
+            "beds_min": 3,
+            "search_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(webapp, "fetch_saved_search_investment_defaults", lambda config, saved_search_id: {})
+    monkeypatch.setattr(
+        webapp,
+        "hydrate_defaults_for_saved_search",
+        lambda config, saved_search: (
+            {},
+            {
+                "match_type": "exact",
+                "confidence": "high",
+                "notes": "Exact market reference match found.",
+                "market_reference": {
+                    "average_rent_monthly": 1822,
+                    "source_url": "https://example.com/cmhc",
+                },
+            },
+        ),
+    )
+
+    def fake_persist(config, saved_search_id, defaults_snapshot):
+        captured["defaults_snapshot"] = defaults_snapshot
+
+    monkeypatch.setattr(webapp, "persist_saved_search_investment_defaults", fake_persist)
+    monkeypatch.setattr(webapp, "clear_listing_rent_overrides_for_saved_search", lambda config, saved_search_id: None)
+
+    client = webapp.app.test_client()
+    response = client.post("/saved-searches/7/investment-analyzer/use-cmhc-rent", data={"market_rent_monthly": "2000"})
+
+    assert response.status_code == 302
+    defaults_snapshot = captured["defaults_snapshot"]
+    assert defaults_snapshot["market_rent_monthly"]["value"] == 1822.0
+    assert defaults_snapshot["market_rent_monthly"]["manual_value"] == 2000.0
+    assert defaults_snapshot["market_rent_monthly"]["source"] == "cmhc_exact"
 
 
 def test_use_off_utilities_default_persists_zero_value(monkeypatch) -> None:

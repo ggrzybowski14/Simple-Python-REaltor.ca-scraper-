@@ -151,6 +151,58 @@ def test_hydrate_defaults_with_market_data_sets_missing_rent_and_vacancy() -> No
     assert hydrated["vacancy_percent"]["source"] == "cmhc_exact"
 
 
+def test_hydrate_defaults_with_market_data_preserves_manual_vacancy_even_when_value_matches_default() -> None:
+    defaults = merge_investment_defaults(
+        {
+            "vacancy_percent": {
+                "value": 4.0,
+                "source": "manual",
+                "help_text": "Manual saved-search vacancy value.",
+            }
+        }
+    )
+    market_match = {
+        "match_type": "exact",
+        "matched_market_name": "Victoria",
+        "market_reference": {
+            "average_rent_monthly": 2350,
+            "vacancy_rate_percent": 3.2,
+            "source_url": "https://example.com/cmhc",
+        },
+    }
+
+    hydrated = hydrate_defaults_with_market_data(defaults, market_match)
+
+    assert hydrated["vacancy_percent"]["value"] == 4.0
+    assert hydrated["vacancy_percent"]["source"] == "manual"
+
+
+def test_hydrate_defaults_with_market_data_preserves_manual_rent_even_when_blank() -> None:
+    defaults = merge_investment_defaults(
+        {
+            "market_rent_monthly": {
+                "value": None,
+                "source": "manual",
+                "help_text": "Manual saved-search rent value.",
+            }
+        }
+    )
+    market_match = {
+        "match_type": "exact",
+        "matched_market_name": "Victoria",
+        "market_reference": {
+            "average_rent_monthly": 2350,
+            "vacancy_rate_percent": 3.2,
+            "source_url": "https://example.com/cmhc",
+        },
+    }
+
+    hydrated = hydrate_defaults_with_market_data(defaults, market_match)
+
+    assert hydrated["market_rent_monthly"]["value"] is None
+    assert hydrated["market_rent_monthly"]["source"] == "manual"
+
+
 def test_infer_province_recognizes_sidney_as_bc() -> None:
     assert infer_province({"location": "Sidney"}) == "BC"
 
