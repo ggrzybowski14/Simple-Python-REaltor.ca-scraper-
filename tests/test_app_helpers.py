@@ -106,6 +106,50 @@ def test_build_combined_analysis_verdict_uses_buy_box_and_underwriting() -> None
         {"label": "Likely"},
         {"label": "Weak", "slug": "weak"},
     )["label"] == "Reject"
+    assert webapp.build_combined_analysis_verdict(
+        {"label": "Unlikely"},
+        {"label": "Promising", "slug": "promising"},
+    )["label"] == "Review"
+
+
+def test_persist_latest_listing_analysis_stores_state_in_saved_search_snapshot(monkeypatch) -> None:
+    patched_payloads = []
+    saved_search = {"id": 7, "search_snapshot": {"buy_box": {"applied": True}}}
+    state = {
+        "buy_box": {"applied": True},
+        "defaults_snapshot": {"market_rent_monthly": {"value": 3000}},
+        "overrides_by_listing_id": {"101": {"market_rent_monthly": 3200}},
+        "ran_at": "2026-04-26T16:00:00Z",
+    }
+
+    def fake_patch(config, path, *, query, payload):
+        patched_payloads.append({"path": path, "query": query, "payload": payload})
+
+    monkeypatch.setattr(webapp, "supabase_patch", fake_patch)
+
+    webapp.persist_latest_listing_analysis(
+        webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+        saved_search,
+        state,
+    )
+
+    assert saved_search["search_snapshot"]["buy_box"]["applied"] is True
+    assert saved_search["search_snapshot"]["latest_listing_analysis"] == state
+    assert patched_payloads[0]["path"] == "saved_searches"
+    assert patched_payloads[0]["payload"]["search_snapshot"]["latest_listing_analysis"] == state
+
+
+def test_get_saved_listing_analysis_state_reads_snapshot() -> None:
+    state = {
+        "buy_box": {"applied": True},
+        "defaults_snapshot": {},
+        "overrides_by_listing_id": {},
+        "ran_at": "2026-04-26T16:00:00Z",
+    }
+
+    assert webapp.get_saved_listing_analysis_state(
+        {"search_snapshot": {"latest_listing_analysis": state}}
+    ) == state
 
 
 def test_build_scrape_args_omits_zero_beds_filter() -> None:

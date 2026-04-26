@@ -644,11 +644,23 @@ def build_combined_analysis_verdict(
     buy_box_label = (buy_box or {}).get("label")
     underwriting_slug = underwriting_verdict.get("slug")
 
-    if buy_box_label == "Unlikely" or underwriting_slug == "weak":
+    if underwriting_slug == "weak":
         return {
             "label": "Reject",
             "slug": "reject",
-            "reason": "Fails the buy box or underwriting floor.",
+            "reason": "Fails the underwriting floor.",
+        }
+    if buy_box_label == "Unlikely" and underwriting_slug == "promising":
+        return {
+            "label": "Review",
+            "slug": "review",
+            "reason": "Strong underwriting, but outside the buy box.",
+        }
+    if buy_box_label == "Unlikely":
+        return {
+            "label": "Reject",
+            "slug": "reject",
+            "reason": "Fails the buy box.",
         }
     if buy_box_label == "Maybe" or underwriting_slug == "borderline":
         return {
@@ -715,19 +727,22 @@ def build_underwriting_rows(
     )
 
 
-def get_listing_analysis_state(saved_search_id: int) -> dict[str, Any] | None:
-    state = LISTING_ANALYSIS_RUNS.get(saved_search_id)
+def get_saved_listing_analysis_state(saved_search: dict[str, Any]) -> dict[str, Any] | None:
+    snapshot = saved_search.get("search_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    state = snapshot.get("latest_listing_analysis")
     return state if isinstance(state, dict) else None
 
 
-def set_listing_analysis_state(
+def build_listing_analysis_state(
     saved_search_id: int,
     *,
     buy_box: dict[str, Any],
     defaults_snapshot: dict[str, dict[str, Any]],
     overrides_by_listing_id: dict[int, dict[str, Any]],
-) -> None:
-    LISTING_ANALYSIS_RUNS[saved_search_id] = {
+) -> dict[str, Any]:
+    return {
         "buy_box": buy_box,
         "defaults_snapshot": defaults_snapshot,
         "overrides_by_listing_id": {
@@ -736,6 +751,23 @@ def set_listing_analysis_state(
         },
         "ran_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
+
+
+def set_listing_analysis_state(
+    saved_search_id: int,
+    *,
+    buy_box: dict[str, Any],
+    defaults_snapshot: dict[str, dict[str, Any]],
+    overrides_by_listing_id: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    state = build_listing_analysis_state(
+        saved_search_id,
+        buy_box=buy_box,
+        defaults_snapshot=defaults_snapshot,
+        overrides_by_listing_id=overrides_by_listing_id,
+    )
+    LISTING_ANALYSIS_RUNS[saved_search_id] = state
+    return state
 
 
 def clear_listing_analysis_state(saved_search_id: int) -> None:
@@ -1145,7 +1177,7 @@ def create_app() -> Flask:
             [listing["listing_id"] for listing in active_listings],
         )
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
-        analysis_state = get_listing_analysis_state(saved_search_id)
+        analysis_state = get_saved_listing_analysis_state(saved_search) or LISTING_ANALYSIS_RUNS.get(saved_search_id)
         analysis_has_run = analysis_state is not None
         analysis_buy_box = analysis_state.get("buy_box", {}) if analysis_state else {}
         analysis_defaults = analysis_state.get("defaults_snapshot", {}) if analysis_state else {}
@@ -1217,12 +1249,13 @@ def create_app() -> Flask:
             saved_search_id,
             [listing["listing_id"] for listing in active_listings],
         )
-        set_listing_analysis_state(
+        analysis_state = set_listing_analysis_state(
             saved_search_id,
             buy_box=buy_box,
             defaults_snapshot=defaults_snapshot,
             overrides_by_listing_id=overrides_by_listing_id,
         )
+        persist_latest_listing_analysis(config, saved_search, analysis_state)
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, analyzed=1))
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/defaults", methods=["POST"])
@@ -3022,10 +3055,31 @@ def persist_saved_buy_box(
     saved_search["search_snapshot"] = normalized_snapshot
 
 
+def persist_latest_listing_analysis(
+    config: SupabaseReadConfig,
+    saved_search: dict[str, Any],
+    state: dict[str, Any],
+) -> None:
+    snapshot = saved_search.get("search_snapshot")
+    normalized_snapshot = dict(snapshot) if isinstance(snapshot, dict) else {}
+    normalized_snapshot["latest_listing_analysis"] = state
+    try:
+        supabase_patch(
+            config,
+            "saved_searches",
+            query={"id": f"eq.{saved_search['id']}"},
+            payload={"search_snapshot": normalized_snapshot},
+        )
+    except RuntimeError:
+        return
+    saved_search["search_snapshot"] = normalized_snapshot
+
+
 def clear_saved_buy_box(config: SupabaseReadConfig, saved_search: dict[str, Any]) -> None:
     snapshot = saved_search.get("search_snapshot")
     normalized_snapshot = dict(snapshot) if isinstance(snapshot, dict) else {}
     normalized_snapshot.pop("buy_box", None)
+    normalized_snapshot.pop("latest_listing_analysis", None)
     supabase_patch(
         config,
         "saved_searches",

@@ -1154,6 +1154,11 @@ textarea {
   font-weight: 700;
 }
 
+.borderline-metric {
+  color: #8b4f0d;
+  font-weight: 700;
+}
+
 .warning-text {
   color: #8a2525;
   font-weight: 700;

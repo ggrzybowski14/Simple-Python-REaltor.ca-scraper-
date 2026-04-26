@@ -22,7 +22,7 @@ Current prototype state:
 - Listing Analysis workspace in place: buy-box screening and investment underwriting now run together for all active listings in a saved search
 - Listing Analysis workflow now uses an explicit setup-and-run step: users confirm buy-box criteria and saved-search defaults, then press `Run analysis` or `Rerun analysis` to refresh the table
 - Combined analysis verdicts working: each active listing can be grouped as `Strong`, `Review`, or `Reject` based on buy-box result plus underwriting result
-- Underwriting persistence working: saved-search defaults plus listing-level rent overrides
+- Underwriting persistence working: saved-search defaults, listing-level rent overrides, and the latest listing-analysis run snapshot per saved search
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
 - CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values, including same-value source switches
 - Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
@@ -37,10 +37,11 @@ Current prototype state:
 - Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
+- Listing-analysis results UX simplified: the table now emphasizes `Final Score`, `Buy Box Outcome`, and `Underwriting Score`, uses header info chips for scoring logic, hides low-value scraped taxes/HOA/warnings columns, and color-codes core investment metrics
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
 - Current active step: audit CMHC secondary-rental tables for usable detached-house coverage and keep expanding the market context layer where official data is publishable
-- Current UI priority: simplify the listing-analysis results language; consider whether the table should emphasize only the final decision rating rather than showing separate `Final`, `Buy Box`, and `Underwriting` labels
+- Current UI priority: continue tightening the listing-analysis results language and decide how much detail should move into tooltips, listing detail, or future expandable rows
 
 ## What It Does Today
 
@@ -278,6 +279,7 @@ Current website scope:
   - source controls for market rent, vacancy, utilities, and insurance
   - explicit `Run analysis` / `Rerun analysis` action that saves buy-box criteria and underwriting defaults together before refreshing results
   - a setup state that hides the results table until analysis has been run
+  - latest analysis persistence through the saved-search snapshot so reloads and local server restarts can show the most recent run
   - combined `Strong`, `Review`, and `Reject` final verdicts
 - saved buy-box summary showing the currently persisted structured and AI criteria where relevant
 - buy-box verdict and AI reasoning on the listing-detail page
@@ -285,6 +287,9 @@ Current website scope:
   - all active listings underwritten by default
   - grouping by combined buy-box plus underwriting verdict
   - sorting within each group by strongest monthly cash flow first
+  - compact score columns for `Final Score`, `Buy Box Outcome`, and `Underwriting Score`
+  - explanatory info chips in the table headers instead of repeated row-level reason text
+  - metric color bands for cash flow, cap rate, cash-on-cash, and rent-to-price ratio
   - saved-search underwriting defaults
   - local source controls for market rent, vacancy, utilities, and insurance
   - source-mode changes that persist independently without automatically rerunning the visible results table
@@ -320,7 +325,7 @@ Current website limitations:
 - CMHC rent data is still incomplete for detached-house coverage in BC, so house searches can still require manual or AI adjustment even after the new townhouse / condo groundwork
 - utilities and insurance rule-based estimates are BC-wide heuristics, not market-specific estimates
 - smart maintenance and smart CapEx are heuristic listing-level overrides, not full asset-condition models
-- the results table currently exposes several related labels (`Final`, buy-box fit, and underwriting strength), and the next UI pass should decide whether to collapse those into a simpler final-rating presentation
+- the results table is cleaner than before, but deal-type explanation, expandable row details, and projection metrics are still not built
 
 ## Product Direction
 
@@ -370,9 +375,44 @@ Planning guidance:
 - cash flow is the backbone of the analyzer
 - the product should distinguish canonical metrics from heuristic rules
 - buy-box and underwriting results should be merged into a practical final verdict, currently `Strong`, `Review`, or `Reject`
-- current table labels are intentionally under review; a future pass may make `Final` the primary or only prominent rating and move buy-box/underwriting detail into supporting context
-- long-term metrics like appreciation, IRR, and equity multiple should be phase 2+ work after the base underwriting engine is stable
+- table labels now use `Final Score`, `Buy Box Outcome`, and `Underwriting Score`; the current direction is to keep the three-column score view compact and move detailed explanations into info chips or expandable detail
+- long-term metrics like appreciation, IRR, and equity multiple should be phase 2+ work after the base underwriting engine is stable; IRR should be added as a projection metric, not as a replacement for cash-flow survivability
 - future market context should support items like rent growth, appreciation, population growth, job growth, household income, supply, and liquidity
+
+### IRR Projection Notes
+
+IRR is intentionally not implemented yet. When added, it should live in a projection layer rather than the core underwriting score.
+
+Planned V1 inputs:
+
+- hold period, defaulting to 5 years
+- appreciation rate with explicit source modes: official market data, approved proxy, manual, and optionally AI estimate
+- rent growth rate
+- expense growth rate
+- selling cost percentage
+
+Planned calculation:
+
+- initial cash outflow is down payment plus closing costs
+- annual cash flows start from current underwriting and grow rent/expenses separately
+- exit proceeds equal projected sale price minus selling costs and remaining loan balance
+- IRR solves the annualized return from the initial cash outflow, yearly cash flows, and sale proceeds
+
+Appreciation source priority should be:
+
+1. exact CREA HPI or other official market/property-type series where available
+2. explicit approved proxy, clearly labeled lower confidence
+3. manual user input
+4. AI estimate only as an explicit fallback/synthesis path, never silently selected
+
+IRR benchmarks under consideration:
+
+- below 10%: weak
+- 10% to 15%: solid
+- 15% to 20%: strong
+- 20% or higher: excellent
+
+Product guardrail: a strong IRR should not automatically make a weak cash-flow property `Strong`. If cash flow is weak but projected IRR is attractive, the listing should usually remain `Review` and be framed as a possible appreciation or value-add bet.
 
 AI-assisted estimation is already part of the product for selective cases, but not every assumption should become AI-driven. The intended rule is:
 

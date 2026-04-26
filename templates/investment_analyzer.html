@@ -593,42 +593,42 @@
     <p class="eyebrow">Analysis Results</p>
     <h2>{% if analysis_has_run %}Buy box plus underwriting{% else %}Ready to run{% endif %}</h2>
   </div>
-  {% if analysis_has_run and analysis_ran_at %}
-  <p class="meta-line">Last run: {{ analysis_ran_at }}. Changes above are saved separately and appear here after rerunning analysis.</p>
-  {% endif %}
-  {% if analysis_has_run %}
-  <div class="table-legend">
-    <span class="pill verdict-strong">Strong</span>
-    <span class="pill verdict-review">Review</span>
-    <span class="pill verdict-reject">Reject</span>
-    <span class="pill verdict-promising">Promising</span>
-    <span class="pill verdict-borderline">Borderline</span>
-    <span class="pill verdict-weak">Weak</span>
-    {% if analysis_buy_box.applied %}
-    <span class="pill status-succeeded">Likely</span>
-    <span class="pill ai-pill ai-maybe">Maybe</span>
-    <span class="pill status-failed">Unlikely</span>
-    {% endif %}
-  </div>
-  {% endif %}
   {% if underwriting_rows %}
   <div class="table-wrap">
     <table class="data-table underwriting-table">
       <thead>
         <tr>
           <th>Listing</th>
-          <th>Final</th>
-          <th>Buy Box</th>
+          <th>
+            Final Score
+            <span class="info-chip" title="Overall listing decision. Strong means the listing passes the buy box and underwriting is promising. Review means one layer is mixed, borderline, or outside the buy box despite strong underwriting. Reject means the listing fails the buy box without strong underwriting, or underwriting is weak.">i</span>
+          </th>
+          <th>
+            Buy Box Outcome
+            <span class="info-chip" title="Screening result from price, beds, property type, required description keywords, and optional AI interpretation. Likely fits the buy box. Maybe needs review. Unlikely is outside the target criteria.">i</span>
+          </th>
+          <th>
+            Underwriting Score
+            <span class="info-chip" title="Financial score from underwriting metrics. Promising requires positive monthly cash flow and at least a 5.0% cap rate, or 4.5% cap rate when warnings exist. Weak means monthly cash flow is below -$150. Borderline covers missing rent or price, marginal cash flow, weaker cap rate, or mixed results.">i</span>
+          </th>
           <th>Price</th>
-          <th>Taxes</th>
-          <th>HOA</th>
           <th>Rent</th>
-          <th>Cash Flow</th>
-          <th>Cap Rate</th>
-          <th>Cash-On-Cash</th>
-          <th>Rent / Price</th>
-          <th>Underwriting</th>
-          <th>Warnings</th>
+          <th>
+            Cash Flow
+            <span class="info-chip" title="Monthly rent minus mortgage payment and modeled monthly expenses, including taxes, HOA or strata, vacancy, maintenance, CapEx, management, insurance, utilities, and other costs.">i</span>
+          </th>
+          <th>
+            Cap Rate
+            <span class="info-chip" title="Annual net operating income divided by purchase price. This is an unlevered return metric, so it ignores mortgage financing.">i</span>
+          </th>
+          <th>
+            Cash-On-Cash
+            <span class="info-chip" title="Annual cash flow divided by estimated cash invested, including down payment and closing costs. This estimates return on your invested cash after financing.">i</span>
+          </th>
+          <th>
+            Rent / Price
+            <span class="info-chip" title="Monthly rent divided by purchase price. This is the rent-to-price ratio and is similar to the 1% rule quick filter.">i</span>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -638,7 +638,7 @@
         {% if current_group.label != group_label %}
         {% set current_group.label = group_label %}
         <tr class="group-divider-row">
-          <td colspan="13">
+          <td colspan="10">
             <div class="group-divider">
               <strong>{{ group_label }}</strong>
             </div>
@@ -659,32 +659,16 @@
           </td>
           <td>
             <span class="pill verdict-{{ row.combined_verdict.slug }}">{{ row.combined_verdict.label }}</span>
-            <div class="table-subline">{{ row.combined_verdict.reason }}</div>
           </td>
           <td>
             {% if row.buy_box %}
             <span class="pill {% if row.buy_box.label == 'Likely' %}status-succeeded{% elif row.buy_box.label == 'Maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}">{{ row.buy_box.label }}</span>
-            {% if row.buy_box.ai_verdict %}
-            <div class="table-subline">AI {{ row.buy_box.ai_verdict|title }}</div>
-            {% endif %}
-            {% if row.buy_box.reasons %}
-            <div class="table-subline">{{ row.buy_box.reasons[0] }}</div>
-            {% endif %}
             {% else %}
             <span class="table-subline">No buy box</span>
             {% endif %}
           </td>
+          <td><span class="pill verdict-{{ row.verdict.slug }}">{{ row.verdict.label }}</span></td>
           <td class="numeric-cell">{{ row.metrics.purchase_price|currency }}</td>
-          <td>
-            {% if row.metrics.monthly_property_tax is not none %}
-            <div class="numeric-cell">{{ (row.metrics.monthly_property_tax * 12)|currency }}</div>
-            <div class="table-subline">Scraped</div>
-            {% else %}
-            <span class="warning-text">Warning</span>
-            <div class="table-subline">Missing taxes</div>
-            {% endif %}
-          </td>
-          <td class="numeric-cell">{{ row.metrics.monthly_hoa|currency }}</td>
           <td>
             <form method="post" action="{{ url_for('save_listing_rent_override', saved_search_id=saved_search.id, listing_id=row.listing.listing_id) }}" class="table-edit-form">
               <input type="hidden" name="redirect_target" value="investment_analyzer">
@@ -708,22 +692,10 @@
               {% endif %}
             </div>
           </td>
-          <td class="numeric-cell {% if row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow < 0 %}negative-metric{% elif row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow > 0 %}positive-metric{% endif %}">{{ row.metrics.monthly_cash_flow|currency }}</td>
-          <td class="numeric-cell">{{ row.metrics.cap_rate|percent1 }}</td>
-          <td class="numeric-cell">{{ row.metrics.cash_on_cash_return|percent1 }}</td>
-          <td class="numeric-cell">{{ row.metrics.rent_to_price_ratio|percent1 }}</td>
-          <td><span class="pill verdict-{{ row.verdict.slug }}">{{ row.verdict.label }}</span></td>
-          <td>
-            {% if row.warnings %}
-            <div class="warning-list">
-              {% for warning in row.warnings %}
-              <span class="pill status-running">{{ warning }}</span>
-              {% endfor %}
-            </div>
-            {% else %}
-            <span class="table-subline">None</span>
-            {% endif %}
-          </td>
+          <td class="numeric-cell {% if row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow < 0 %}negative-metric{% elif row.metrics.monthly_cash_flow is not none and row.metrics.monthly_cash_flow < 200 %}borderline-metric{% elif row.metrics.monthly_cash_flow is not none %}positive-metric{% endif %}">{{ row.metrics.monthly_cash_flow|currency }}</td>
+          <td class="numeric-cell {% if row.metrics.cap_rate is not none and row.metrics.cap_rate < 4 %}negative-metric{% elif row.metrics.cap_rate is not none and row.metrics.cap_rate < 5 %}borderline-metric{% elif row.metrics.cap_rate is not none %}positive-metric{% endif %}">{{ row.metrics.cap_rate|percent1 }}</td>
+          <td class="numeric-cell {% if row.metrics.cash_on_cash_return is not none and row.metrics.cash_on_cash_return < 5 %}negative-metric{% elif row.metrics.cash_on_cash_return is not none and row.metrics.cash_on_cash_return < 8 %}borderline-metric{% elif row.metrics.cash_on_cash_return is not none %}positive-metric{% endif %}">{{ row.metrics.cash_on_cash_return|percent1 }}</td>
+          <td class="numeric-cell {% if row.metrics.rent_to_price_ratio is not none and row.metrics.rent_to_price_ratio < 0.5 %}negative-metric{% elif row.metrics.rent_to_price_ratio is not none and row.metrics.rent_to_price_ratio < 0.7 %}borderline-metric{% elif row.metrics.rent_to_price_ratio is not none %}positive-metric{% endif %}">{{ row.metrics.rent_to_price_ratio|percent1 }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -749,7 +721,10 @@
 
     document.addEventListener("submit", (event) => {
       const submitter = event.submitter;
-      if (submitter && submitter.classList.contains("mini-button")) {
+      if (
+        submitter &&
+        (submitter.classList.contains("mini-button") || submitter.classList.contains("button-primary"))
+      ) {
         sessionStorage.setItem(key, String(window.scrollY));
       }
     });

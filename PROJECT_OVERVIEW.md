@@ -28,6 +28,7 @@ The codebase now also has the first real underwriting layer:
 - combined buy-box plus underwriting final verdicts
 - persisted underwriting defaults at the saved-search level
 - listing-level rent overrides
+- persisted latest listing-analysis run snapshot per saved search
 - CMHC-backed market reference data for rent and vacancy baselines
 - BC-wide rule-based utilities and insurance defaults
 - listing-level smart maintenance and CapEx override support
@@ -95,6 +96,10 @@ The local website currently provides:
 - persisted buy-box settings per saved search
 - listing-analysis page where buy-box screening and underwriting assumptions run together
 - listing-analysis page now starts in a setup state and only fills the results table after the user presses `Run analysis`
+- latest listing-analysis run persists in the saved-search snapshot and can be restored after a reload or local server restart
+- listing-analysis results table now uses compact score columns: `Final Score`, `Buy Box Outcome`, and `Underwriting Score`
+- repeated row-level score explanation text has been moved into header info chips; scraped taxes, HOA, and warnings are not shown as table columns
+- cash flow, cap rate, cash-on-cash, and rent-to-price ratio use green / orange / red metric color bands
 - targeted retry of sparse listing details
 - investment analyzer route retained as the listing-analysis URL for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
@@ -535,7 +540,7 @@ Workflow behavior:
 - opening `Analyze Listings` shows setup controls first
 - changing source modes such as manual, CMHC, AI, rule-based utilities/insurance, or smart reserves saves that setting but does not automatically rewrite the visible analysis table
 - pressing `Run analysis` or `Rerun analysis` saves the current buy-box criteria and saved-search defaults together, snapshots the current listing-level overrides, and refreshes the table
-- the current implementation keeps the last run snapshot in the local Flask process, matching the app's current local-first prototype posture
+- the latest run snapshot is persisted in `saved_searches.search_snapshot.latest_listing_analysis`; the local in-memory state remains only a fallback for the current process
 
 - `Cash Flow`
   monthly rent, monthly expenses, mortgage, monthly cash flow
@@ -555,14 +560,53 @@ Current final result buckets:
 - `Strong`
   buy box is likely or inactive, and underwriting is promising
 - `Review`
-  buy box is maybe, underwriting is borderline, or the signal is mixed
+  buy box is maybe, underwriting is borderline, the signal is mixed, or a listing is outside the buy box but has promising underwriting
 - `Reject`
-  buy box is unlikely or underwriting is weak
+  buy box is unlikely without promising underwriting, or underwriting is weak
 
-Open UI question:
+Current UI direction:
 
-- the current table exposes `Final`, `Buy Box`, and `Underwriting`, which may be too many overlapping decision labels
-- the next UI pass should consider making `Final` the dominant or only visible rating and moving buy-box/underwriting detail into secondary context
+- keep the three score columns visible for now, but make them compact
+- use header info chips to explain score logic instead of repeating reason text in every row
+- reserve detailed reasons, warnings, and source explanations for listing detail or a future expandable row
+
+## Future IRR Projection Metric
+
+IRR is not implemented yet. It should be added as a projection metric after the current underwriting table stabilizes.
+
+IRR should include:
+
+- yearly cash flow
+- appreciation
+- loan paydown
+- projected sale price
+- selling costs
+- remaining loan balance at exit
+
+Recommended V1 projection assumptions:
+
+- hold period, default 5 years
+- appreciation rate percentage
+- appreciation source and confidence
+- rent growth percentage
+- expense growth percentage
+- selling cost percentage
+
+Appreciation source priority:
+
+1. exact official market/property-type data such as CREA HPI
+2. explicit approved proxy market, labeled low confidence
+3. manual user input
+4. AI estimate as an explicit fallback or synthesis path only
+
+Suggested IRR display bands:
+
+- below 10%: weak
+- 10% to 15%: solid
+- 15% to 20%: strong
+- 20% or higher: excellent
+
+Product guardrail: IRR should not override survivability. A property with weak current cash flow but attractive projected IRR should usually be `Review`, not `Strong`, and should be framed as an appreciation, hybrid, or value-add thesis.
 
 ## Product Decisions Locked In
 
@@ -710,6 +754,7 @@ Scope:
 - cash flow over time
 - 5, 10, 20, and 30 year projections
 - annualized return, IRR, and equity multiple
+- source-aware appreciation assumptions from official data, approved proxy, manual input, or explicit AI estimate
 
 ### Phase 8: Workflow Layer
 
@@ -727,29 +772,31 @@ Likely scope:
 
 The highest-value build order from here is:
 
-1. tighten the investment-analyzer UI so source modes and smart per-listing overrides are easy to understand
+1. keep tightening the investment-analyzer UI so score columns, source modes, and smart per-listing overrides are easy to understand
 2. keep vacancy sourced from market stats plus manual editing, and make that behavior clearer in the UI
 3. improve scrape result stability and first-page logging
 4. harden pagination until `results_count` and collected summaries align more reliably
 5. add listing workflow states such as shortlist / ignore / notes if needed for review
 6. add rule indicators and base / conservative / stress scenarios
-7. keep refining smarter defaults only where the source quality is defensible
+7. add IRR as a projection metric once appreciation source controls are clear
+8. keep refining smarter defaults only where the source quality is defensible
 
 ## Immediate Next Goal
 
 The next concrete goal for the project is:
 
-- make the analysis-results UX clearer now that the table shows `Final`, buy-box fit, and underwriting strength together
-- decide whether the product should collapse toward one dominant final rating and treat buy-box/underwriting detail as supporting context
+- keep refining the compact analysis-results UX now that the table shows `Final Score`, `Buy Box Outcome`, and `Underwriting Score`
+- decide whether detailed score reasons should live in expandable rows, listing detail, or only header info chips
 - keep making the underwriting UX clearer now that multiple assumption source modes and listing-level overrides exist
 - keep stabilizing listing ingestion enough that underwriting can trust the active result set
 
 The next coding session should therefore start by answering:
 
-1. should the table keep separate `Final`, `Buy Box`, and `Underwriting` columns, or should `Final` become the main visible rating with details collapsed or secondary
+1. should the table add expandable row details for score reasons, warnings, and source confidence
 2. how should the analyzer page communicate smart listing overrides without forcing constant navigation into listing detail
 3. how should the UI communicate that vacancy is stats-backed when available and otherwise manually entered
-4. do we need one more scraper reliability pass before relying more heavily on the active set
+4. what exact source controls are needed before adding IRR projection assumptions
+5. do we need one more scraper reliability pass before relying more heavily on the active set
 
 ## Current Risks And Constraints
 
