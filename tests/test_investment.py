@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from investment import (
+    build_defaults_snapshot_from_form,
     calculate_underwriting,
     estimate_rule_based_insurance_monthly,
     estimate_rule_based_utilities_monthly,
@@ -13,6 +14,32 @@ from investment import (
 
 def build_defaults(overrides: dict[str, dict[str, float]] | None = None) -> dict[str, dict[str, object]]:
     return merge_investment_defaults(overrides or {})
+
+
+def test_build_defaults_snapshot_from_form_preserves_non_manual_blank_source_mode() -> None:
+    defaults = build_defaults(
+        {
+            "market_rent_monthly": {
+                "value": 2420,
+                "source": "cmhc_exact",
+                "confidence": "high",
+            }
+        }
+    )
+
+    snapshot = build_defaults_snapshot_from_form({"market_rent_monthly": ""}, existing_defaults=defaults)
+
+    assert snapshot["market_rent_monthly"]["value"] == 2420
+    assert snapshot["market_rent_monthly"]["source"] == "cmhc_exact"
+
+
+def test_build_defaults_snapshot_from_form_allows_manual_blank_value() -> None:
+    defaults = build_defaults({"market_rent_monthly": {"value": 2420, "source": "manual"}})
+
+    snapshot = build_defaults_snapshot_from_form({"market_rent_monthly": ""}, existing_defaults=defaults)
+
+    assert snapshot["market_rent_monthly"]["value"] is None
+    assert snapshot["market_rent_monthly"]["source"] == "manual"
 
 
 def test_calculate_underwriting_returns_expected_metrics() -> None:

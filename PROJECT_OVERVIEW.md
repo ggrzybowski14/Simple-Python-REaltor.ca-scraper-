@@ -30,6 +30,8 @@ The codebase now also has the first real underwriting layer:
 - listing-level rent overrides
 - persisted latest listing-analysis run snapshot per saved search
 - CMHC-backed market reference data for rent and vacancy baselines
+- explicit source-mode preservation so `Run analysis` does not silently convert active CMHC, AI, rule-based, or off assumptions back to manual
+- buy-box draft preservation while users work through source-mode buttons before committing with `Run analysis`
 - BC-wide rule-based utilities and insurance defaults
 - listing-level smart maintenance and CapEx override support
 
@@ -37,12 +39,15 @@ The codebase now also has the first real market-context layer:
 
 - direct market routes such as `/markets/victoria_bc`
 - dashboard navigation for unique analyzed markets
+- listing-analysis navigation into related market context pages
 - first-pass `market_profiles`, `market_metrics`, and `market_metric_series`
 - seeded Duncan and Victoria market stats
 - seeded Victoria appreciation history from Statistics Canada RPPI
 - explicit empty-state behavior for markets without a matched appreciation series yet
 - automatic market-profile bootstrap for newly discovered scraped markets
 - a bulk StatCan import path for the core structured market metrics used by the current market page
+- CMHC rental cards for apartment, townhouse, condo-apartment, and AI-estimated detached-house gaps where official detached-house values are missing
+- market-page bedroom filters that persist through rental AI, appreciation proxy, and appreciation AI actions
 
 This is still an early application, not a polished product, but it is already beyond pure scraping validation.
 
@@ -96,6 +101,7 @@ The local website currently provides:
 - persisted buy-box settings per saved search
 - listing-analysis page where buy-box screening and underwriting assumptions run together
 - listing-analysis page now starts in a setup state and only fills the results table after the user presses `Run analysis`
+- unsaved buy-box text fields survive source-mode button redirects until `Run analysis` is pressed
 - latest listing-analysis run persists in the saved-search snapshot and can be restored after a reload or local server restart
 - listing-analysis results table now uses compact score columns: `Final Score`, `Buy Box Outcome`, and `Underwriting Score`
 - repeated row-level score explanation text has been moved into header info chips; scraped taxes, HOA, and warnings are not shown as table columns
@@ -104,10 +110,12 @@ The local website currently provides:
 - investment analyzer route retained as the listing-analysis URL for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
 - source-mode controls for rent, vacancy, utilities, and insurance
+- source-mode controls preserve active non-manual modes during `Run analysis`
 - smart per-listing maintenance and CapEx estimate actions
 - direct market-context pages for analyzed markets
 - a dashboard-level `Markets analyzed` panel for fast market navigation
 - market-level structured metrics and appreciation scaffolding
+- market-context pages preserve selected bedroom filters across page actions
 
 ### Buy Box
 
@@ -198,6 +206,7 @@ What is already implemented:
 - listing-detail underwriting section
 - source-aware market rent and vacancy controls
 - same-value source switching for rent and vacancy, so manual and CMHC modes can be selected even when their numeric values match
+- `Run analysis` preserves active CMHC, AI, rule-based, and off source modes unless the user explicitly applies a manual value
 - source-aware utilities and insurance controls
 - BC-wide rule-based utilities and insurance heuristics
 - listing-level smart maintenance and CapEx heuristic overrides
@@ -218,17 +227,32 @@ Current page structure:
 - appreciation history
 - demographics and labour
 
+Recent behavior:
+
+- selected bedroom filters persist across market-page actions
+- appreciation proxy and AI actions preserve the current rental-baseline bedroom selection
+- AI appreciation estimates now request best-effort numeric values when official HPI coverage is missing
+- CMHC closest property-type rows are labeled as closest matches rather than generic exact matches
+
 Current live market-context coverage:
 
 - `Duncan`
   - CMHC housing fundamentals
   - seeded Statistics Canada market stats
-  - no appreciation series yet
+  - Vancouver Island appreciation proxy available
 - `Sidney`
   - auto-created discovered market profile
   - Statistics Canada structured market stats imported
   - no exact CMHC housing fundamentals yet
-  - no appreciation series yet
+  - Vancouver Island appreciation proxy available
+- `Nanaimo`
+  - CMHC apartment and townhouse rental fundamentals
+  - AI-estimated detached-house rental gaps where official detached-house rent is missing
+  - Vancouver Island appreciation proxy available
+- `Tofino`
+  - discovered market profile from scraped saved searches
+  - no official CMHC baseline imported yet
+  - Vancouver Island appreciation proxy available for AI appreciation anchoring
 - `Vancouver`
   - CMHC housing fundamentals
   - Statistics Canada structured market stats imported
@@ -264,7 +288,8 @@ The following should be treated as current working assumptions unless the user e
 - `Vacancy %` stays stats-backed plus manually editable; it is not an AI mode right now
 - market pages should support partial coverage cleanly rather than forcing fake completeness
 - appreciation charts should only render when we have a real source series
-- smaller markets such as `Duncan` should show a clean empty state instead of borrowing a bad appreciation proxy
+- smaller markets should show clean empty states unless a curated explicit proxy or user-triggered AI estimate is available
+- source labels should distinguish official CMHC rows, closest property-type baselines, proxies, and AI estimates
 - listing workflow clarity is still a higher priority than broad new product surface
 - the result-label model is unsettled: `Final` may become the primary visible rating, with buy-box fit and underwriting strength demoted to supporting context
 

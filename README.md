@@ -21,15 +21,20 @@ Current prototype state:
 - Buy-box persistence working: one saved buy box per saved search, now run from the combined listing-analysis workspace and shown on listing-detail pages
 - Listing Analysis workspace in place: buy-box screening and investment underwriting now run together for all active listings in a saved search
 - Listing Analysis workflow now uses an explicit setup-and-run step: users confirm buy-box criteria and saved-search defaults, then press `Run analysis` or `Rerun analysis` to refresh the table
+- Listing Analysis draft preservation working: unsaved buy-box edits survive source-mode button clicks until `Run analysis` commits the workflow
 - Combined analysis verdicts working: each active listing can be grouped as `Strong`, `Review`, or `Reject` based on buy-box result plus underwriting result
 - Underwriting persistence working: saved-search defaults, listing-level rent overrides, and the latest listing-analysis run snapshot per saved search
 - CMHC market-reference layer working: imported market rent and vacancy reference rows can hydrate underwriting defaults
-- CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values, including same-value source switches
+- CMHC source controls working: rent and vacancy can explicitly switch between manual and CMHC-backed values, including same-value source switches, and `Run analysis` now preserves active non-manual source modes
+- CMHC fallback labeling improved: closest property-type matches such as Nanaimo townhouse baselines are labeled as closest matches instead of generic exact market matches
 - Market context prototype in place: dedicated market pages now exist for scraped markets and can be opened directly from the dashboard
+- Market navigation from Listing Analysis working: analysis pages link directly into the related market context page
+- Market page state preservation working: bedroom filters persist through rental AI, appreciation AI, and appreciation proxy actions
 - First structured market layer working: `population`, `population growth`, `unemployment`, and `median household income` can now be stored per market and rendered on the website
 - Broader BC structured market coverage working: a bulk StatCan import path can now load those four structured metrics for matched BC markets instead of keeping the market layer limited to hand-seeded examples
 - CREA HPI appreciation layer working: official CREA MLS HPI data is now ingested into Supabase and rendered on market pages with benchmark-price history plus 1M, 12M, 5Y, and 10Y metrics
-- Vancouver Island appreciation proxy working: Duncan, Sidney, and Nanaimo can now use an explicit opt-in Vancouver Island proxy path with clear low-confidence labeling
+- Vancouver Island appreciation proxy working: Duncan, Sidney, Nanaimo, and Tofino can now use an explicit opt-in Vancouver Island proxy path with clear low-confidence labeling
+- AI appreciation fallback tightened: when official HPI data is missing, the AI estimate path now requests best-effort numeric estimates instead of accepting all-null metric cards
 - Broader BC CMHC rental coverage working: CMHC market rental workbooks now feed apartment, townhouse, and condo-apartment rental cards for CMHC-covered BC markets like Victoria, Vancouver, Kelowna, Nanaimo, Kamloops, and Chilliwack
 - Detached-house rental gap documented: CMHC detached and semi-detached BC coverage is still too incomplete or suppressed to present as a reliable single-family baseline yet
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
@@ -39,9 +44,9 @@ Current prototype state:
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
 - Listing-analysis results UX simplified: the table now emphasizes `Final Score`, `Buy Box Outcome`, and `Underwriting Score`, uses header info chips for scoring logic, hides low-value scraped taxes/HOA/warnings columns, and color-codes core investment metrics
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
-- Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, and improved pagination collection
-- Current active step: audit CMHC secondary-rental tables for usable detached-house coverage and keep expanding the market context layer where official data is publishable
-- Current UI priority: continue tightening the listing-analysis results language and decide how much detail should move into tooltips, listing detail, or future expandable rows
+- Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, improved pagination collection, and corrected `BC` versus `British Columbia` location matching for Nanaimo-style searches
+- Current active step: continue validating CMHC detached-house coverage gaps and decide how market-page AI estimates should feed back into saved-search underwriting defaults
+- Current UI priority: tighten source/context language so users can distinguish official data, closest property-type baselines, proxies, and AI estimates at a glance
 
 ## What It Does Today
 
@@ -68,8 +73,10 @@ Current prototype state:
 - Supports targeted retry of only sparse listing details instead of forcing a full rerun
 - Supports a dedicated saved-search listing-analysis page with buy-box controls, grouped listing comparison, and computed investment metrics
 - Supports an explicit listing-analysis setup state before results are generated, so changing assumptions does not automatically rewrite the table until the user reruns analysis
+- Preserves unsaved buy-box draft edits while users work through source-mode controls before running analysis
 - Supports listing-specific rent overrides that feed the underwriting table and listing-detail page
 - Supports CMHC market-reference matching for market rent and vacancy baselines
+- Labels CMHC closest property-type baselines, such as townhouse rows used for house searches, separately from exact market matches
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
 - Supports separate smart maintenance and smart CapEx per-listing override passes for active listings
 - Includes a local pytest suite for the deterministic underwriting and app logic
@@ -77,6 +84,7 @@ Current prototype state:
   - CMHC rent and vacancy where available
   - seeded structured market metrics
   - seeded appreciation history where an official series exists
+- Preserves selected market bedroom filters across market-page actions such as rental AI estimates and appreciation proxy/AI workflows
 - Supports a bulk StatCan market-metrics import workflow so matched BC markets can auto-fill `population`, `population growth`, `unemployment`, and `median household income`
 
 ## What It Is Not Yet

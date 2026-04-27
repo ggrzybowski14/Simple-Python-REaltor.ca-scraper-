@@ -307,7 +307,7 @@ def build_market_appreciation_gap_prompt_text() -> str:
         "The supplied data may include official HPI data, proxy-market HPI data, census metrics, rent metrics, and "
         "other context. Treat this data as reference material, not necessarily as the final answer. Your task is to "
         "estimate the target market itself.\n\n"
-        "For the target market, estimate:\n"
+        "For the target market, estimate best-effort numeric values for:\n"
         "- latest market-wide benchmark home price\n"
         "- 1-month change\n"
         "- 12-month change\n"
@@ -320,7 +320,9 @@ def build_market_appreciation_gap_prompt_text() -> str:
         "If direct official data is missing, infer from nearby markets, regional trend data, population growth, "
         "household income, labour market strength, market size, liquidity, and any supplied proxy data. Do not simply "
         "copy proxy values unless you believe the proxy is truly representative; if you use proxy values, explain why.\n\n"
-        "Return structured JSON only. Percentage values should be plain percentages, not ratios."
+        "Do not return null for the numeric fields. If evidence is thin, provide a low-confidence directional estimate "
+        "and clearly explain the uncertainty in the reasoning. Return structured JSON only. Percentage values should "
+        "be plain percentages, not ratios."
     )
 
 
@@ -379,11 +381,11 @@ def call_openai_market_appreciation_gap_estimate(prompt_text: str, payload: dict
                 "schema": {
                     "type": "object",
                     "properties": {
-                        "latest_benchmark_price": {"type": ["integer", "null"]},
-                        "change_1m_percent": {"type": ["number", "null"]},
-                        "change_12m_percent": {"type": ["number", "null"]},
-                        "appreciation_5y_cagr_percent": {"type": ["number", "null"]},
-                        "appreciation_10y_cagr_percent": {"type": ["number", "null"]},
+                        "latest_benchmark_price": {"type": "integer"},
+                        "change_1m_percent": {"type": "number"},
+                        "change_12m_percent": {"type": "number"},
+                        "appreciation_5y_cagr_percent": {"type": "number"},
+                        "appreciation_10y_cagr_percent": {"type": "number"},
                         "trend_label": {"type": "string"},
                         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                         "reasoning": {"type": "string"},

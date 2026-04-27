@@ -168,8 +168,12 @@ def build_defaults_snapshot_from_form(
 ) -> dict[str, dict[str, Any]]:
     defaults = merge_investment_defaults(existing_defaults)
     for key, definition in defaults.items():
+        if key not in form_data:
+            continue
         previous_value = definition.get("value")
         value = parse_form_number(form_data.get(key))
+        if definition.get("source") != "manual" and value is None:
+            continue
         definition["value"] = value
         if value != previous_value:
             definition["source"] = "manual"

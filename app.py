@@ -1118,7 +1118,13 @@ def create_app() -> Flask:
             parsed_suggestion=parsed_response,
             model=result.get("model"),
         )
-        return redirect(url_for("market_context_by_key", market_key=market_key, ai_appreciation_estimated=1))
+        selected_bedroom_count = parse_market_bedroom_filter(flask_request.form.get("beds"), default=2)
+        redirect_args: dict[str, Any] = {"market_key": market_key, "ai_appreciation_estimated": 1}
+        if selected_bedroom_count is None:
+            redirect_args["beds"] = "all"
+        else:
+            redirect_args["beds"] = selected_bedroom_count
+        return redirect(url_for("market_context_by_key", **redirect_args))
 
     @app.route("/api/markets/<market_key>/appreciation")
     def api_market_appreciation(market_key: str) -> Any:
@@ -1165,6 +1171,7 @@ def create_app() -> Flask:
         saved_search = fetch_saved_search(config, saved_search_id)
         if saved_search is None:
             abort(404)
+        saved_search["market_profile"] = derive_market_profile_from_saved_search(saved_search)
         if flask_request.args.get("clear_buy_box"):
             clear_saved_buy_box(config, saved_search)
             clear_listing_analysis_state(saved_search_id)
@@ -2801,7 +2808,7 @@ def build_market_housing_summary(
         "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
         "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
         "rental_cards": rental_cards,
-        "match_label": f"CMHC {market_match.get('match_type', 'reference').title()}",
+        "match_label": f"CMHC {market_match.get('reference_label') or market_match.get('match_type', 'reference').title()}",
         "matched_market_name": market_match.get("matched_market_name"),
         "notes": market_match.get("notes"),
         "source_url": reference.get("source_url"),

@@ -72,7 +72,7 @@ def test_find_market_reference_match_uses_proxy_for_duncan() -> None:
     assert match["match_type"] == "proxy"
     assert match["matched_market_name"] == "Victoria, BC"
     assert match["property_type_mismatch"] is True
-    assert "apartment-based" in match["notes"]
+    assert "closest available row" in match["notes"]
 
 
 def test_find_market_reference_match_treats_townhouse_as_valid_house_like_baseline() -> None:
@@ -105,6 +105,8 @@ def test_find_market_reference_match_treats_townhouse_as_valid_house_like_baseli
     assert match is not None
     assert match["market_reference"]["id"] == 22
     assert match["property_type_mismatch"] is False
+    assert match["reference_label"] == "2-Bedroom Townhouse closest match"
+    assert "closest available property-type match" in match["notes"]
 
 
 def test_find_market_reference_match_accepts_condo_apartment_for_condo_search() -> None:
@@ -253,6 +255,13 @@ def test_get_appreciation_proxy_market_returns_curated_vancouver_island_proxy() 
     assert proxy is not None
     assert proxy["proxy_key"] == "vancouver_island_bc"
     assert proxy["confidence"] == "low"
+
+
+def test_get_appreciation_proxy_market_supports_legacy_tofino_key() -> None:
+    proxy = get_appreciation_proxy_market("tofino")
+
+    assert proxy is not None
+    assert proxy["proxy_key"] == "vancouver_island_bc"
 
 
 def test_get_appreciation_proxy_market_returns_none_for_unlisted_market() -> None:

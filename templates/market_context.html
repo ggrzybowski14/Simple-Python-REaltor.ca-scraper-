@@ -3,6 +3,7 @@
 {% block title %}{{ market_profile.market_name }} Market Context | Real Estate Analyzer{% endblock %}
 
 {% block content %}
+{% set selected_beds_param = 'all' if selected_bedroom_count is none else selected_bedroom_count %}
 <section class="hero-card compact-hero">
   <div>
     <p class="eyebrow">Phase 5 Scaffold</p>
@@ -162,15 +163,16 @@
     {% if appreciation_chart.proxy_available %}
     <div class="card-actions">
       {% if saved_search %}
-      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
+      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id, use_proxy=1, beds=selected_beds_param) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
       {% else %}
-      <a class="button-secondary button-link" href="{{ url_for('market_context_by_key', market_key=market_profile.market_key, use_proxy=1) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
+      <a class="button-secondary button-link" href="{{ url_for('market_context_by_key', market_key=market_profile.market_key, use_proxy=1, beds=selected_beds_param) }}">Use {{ appreciation_chart.proxy_market_name }} proxy</a>
       {% endif %}
     </div>
     {% endif %}
     {% if appreciation_chart.ai_estimate_available %}
     <form method="post" action="{{ url_for('generate_market_appreciation_ai_estimate', market_key=market_profile.market_key) }}" class="inline-form">
       <input type="hidden" name="property_type" value="composite">
+      <input type="hidden" name="beds" value="{{ selected_beds_param }}">
       <button type="submit" class="button-secondary">{{ 'Re-estimate with AI' if appreciation_chart.ai_estimate_active else 'Estimate with AI' }}</button>
     </form>
     {% endif %}
@@ -320,4 +322,58 @@
     {% endif %}
   </div>
 </section>
+<script>
+  (() => {
+    const marketKey = "{{ market_profile.market_key }}";
+    const storageKey = `marketContextBeds:${marketKey}`;
+    const currentBeds = "{{ selected_beds_param }}";
+    const url = new URL(window.location.href);
+
+    if (!url.searchParams.has("beds")) {
+      const storedBeds = sessionStorage.getItem(storageKey);
+      if (storedBeds) {
+        url.searchParams.set("beds", storedBeds);
+        window.location.replace(url.toString());
+        return;
+      }
+    }
+
+    sessionStorage.setItem(storageKey, currentBeds);
+
+    document.querySelectorAll('input[name="beds"]').forEach((input) => {
+      input.value = currentBeds;
+    });
+
+    document.querySelectorAll('button[name="beds"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        sessionStorage.setItem(storageKey, button.value);
+      });
+    });
+
+    document.querySelectorAll("form").forEach((form) => {
+      form.addEventListener("submit", () => {
+        let bedsInput = form.querySelector('input[name="beds"]');
+        if (!bedsInput) {
+          bedsInput = document.createElement("input");
+          bedsInput.type = "hidden";
+          bedsInput.name = "beds";
+          form.appendChild(bedsInput);
+        }
+        bedsInput.value = sessionStorage.getItem(storageKey) || currentBeds;
+      });
+    });
+
+    document.querySelectorAll("a[href]").forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      if (!href.startsWith("/markets/") && !href.includes("/market-context")) {
+        return;
+      }
+      const linkUrl = new URL(link.href);
+      if (!linkUrl.searchParams.has("beds")) {
+        linkUrl.searchParams.set("beds", sessionStorage.getItem(storageKey) || currentBeds);
+        link.href = linkUrl.toString();
+      }
+    });
+  })();
+</script>
 {% endblock %}

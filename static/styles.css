@@ -1138,6 +1138,11 @@ textarea {
   cursor: pointer;
 }
 
+.mini-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .table-subline {
   margin-top: 0.35rem;
   color: var(--muted);

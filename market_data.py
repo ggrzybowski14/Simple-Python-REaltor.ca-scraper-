@@ -47,6 +47,7 @@ VANCOUVER_ISLAND_PROXY_MARKETS = {
     "duncan_bc",
     "nanaimo_bc",
     "sidney_bc",
+    "tofino",
 }
 
 RENTAL_PROPERTY_TYPE_LABELS = {
@@ -130,6 +131,47 @@ def get_property_type_match_rule(property_type: str | None) -> dict[str, Any]:
     return PROPERTY_TYPE_MATCH_RULES.get(normalized, {"preferred": [normalized] if normalized else [], "acceptable": {normalized} if normalized else set()})
 
 
+def build_reference_label(row: dict[str, Any]) -> str:
+    property_label = get_rental_property_type_label(row.get("property_type")).lower()
+    bedroom_count = row.get("bedroom_count")
+    if isinstance(bedroom_count, int):
+        return f"{bedroom_count}-bedroom {property_label}"
+    return property_label
+
+
+def build_market_match_notes(
+    *,
+    match_type: str,
+    requested_property_type: str | None,
+    row: dict[str, Any],
+    property_type_mismatch: bool,
+    proxy_notes: str | None = None,
+) -> tuple[str, str]:
+    reference_label = build_reference_label(row)
+    requested_label = (requested_property_type or "").replace("_", " ").strip().lower()
+    row_property_type = (row.get("property_type") or "").strip().lower()
+    property_type_differs = bool(requested_label and row_property_type and row_property_type != requested_label)
+    if requested_property_type == "house" and row_property_type == "single_family":
+        property_type_differs = False
+
+    if property_type_mismatch:
+        note = (
+            f"{reference_label.title()} CMHC baseline is the closest available row for this {requested_label or 'saved'} search. "
+            "It may run low for detached-house underwriting."
+        )
+        label = f"{reference_label.title()} closest match"
+    elif property_type_differs:
+        note = f"{reference_label.title()} CMHC baseline is the closest available property-type match for this {requested_label} search."
+        label = f"{reference_label.title()} closest match"
+    else:
+        note = "Exact market and property-type reference match found."
+        label = f"{reference_label.title()} match"
+
+    if match_type == "proxy" and proxy_notes:
+        note = f"{proxy_notes} {note}"
+    return label, note
+
+
 def build_market_profile_from_saved_search(
     saved_search: dict[str, Any],
     *,
@@ -194,16 +236,19 @@ def find_market_reference_match(
             and best_property_type
             and best_property_type not in acceptable_property_types
         )
+        reference_label, notes = build_market_match_notes(
+            match_type="exact",
+            requested_property_type=property_type,
+            row=best,
+            property_type_mismatch=property_type_mismatch,
+        )
         return {
             "match_type": "exact",
             "confidence": "medium" if property_type_mismatch else "high",
             "market_reference": best,
             "matched_market_name": best.get("market_name"),
-            "notes": (
-                "Exact market match found, but the CMHC baseline is apartment-based and may run low for detached-house underwriting."
-                if property_type_mismatch
-                else "Exact market reference match found."
-            ),
+            "reference_label": reference_label,
+            "notes": notes,
             "property_type_mismatch": property_type_mismatch,
         }
 
@@ -218,16 +263,20 @@ def find_market_reference_match(
                 and best_property_type
                 and best_property_type not in acceptable_property_types
             )
+            reference_label, notes = build_market_match_notes(
+                match_type="proxy",
+                requested_property_type=property_type,
+                row=best,
+                property_type_mismatch=property_type_mismatch,
+                proxy_notes=proxy["notes"],
+            )
             return {
                 "match_type": "proxy",
                 "confidence": proxy["confidence"],
                 "market_reference": best,
                 "matched_market_name": proxy["proxy_market_name"],
-                "notes": (
-                    f"{proxy['notes']} The CMHC baseline is apartment-based and may run low for detached-house underwriting."
-                    if property_type_mismatch
-                    else proxy["notes"]
-                ),
+                "reference_label": reference_label,
+                "notes": notes,
                 "property_type_mismatch": property_type_mismatch,
             }
 

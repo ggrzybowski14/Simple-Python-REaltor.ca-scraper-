@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import app as webapp
+from ai_underwriting import build_market_appreciation_gap_prompt_text
 from werkzeug.datastructures import MultiDict
+
+
+def test_market_appreciation_gap_prompt_requires_best_effort_numeric_estimate() -> None:
+    prompt = build_market_appreciation_gap_prompt_text()
+
+    assert "Do not return null for the numeric fields" in prompt
+    assert "low-confidence directional estimate" in prompt
 
 
 def test_build_buy_box_criteria_uses_saved_settings_when_query_not_applied() -> None:

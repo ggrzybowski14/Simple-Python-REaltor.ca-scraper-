@@ -13,8 +13,9 @@
     <a class="help-link" href="{{ field.help_url }}" target="_blank" rel="noreferrer">Source</a>
     {% endif %}
   </span>
-  {% if key == 'vacancy_percent' and market_match %}
-  <div class="source-mode-grid">
+  {% if key == 'vacancy_percent' %}
+  {% set cmhc_vacancy_value = market_match.market_reference.vacancy_rate_percent if market_match else none %}
+  <div class="source-mode-grid source-mode-grid-two">
     <section class="source-mode-card {% if field.source == 'manual' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
@@ -47,7 +48,7 @@
       <div class="source-mode-header">
         <div>
           <p class="eyebrow">CMHC</p>
-          <h3>Use market baseline <span class="info-chip" title="{{ market_match.notes if market_match.notes else 'Uses the matched CMHC market vacancy baseline for this saved search.' }}">i</span></h3>
+          <h3>Use market baseline <span class="info-chip" title="{% if market_match %}{{ market_match.notes if market_match.notes else 'Uses the matched CMHC market vacancy baseline for this saved search.' }}{% else %}No CMHC vacancy baseline is available for this saved search.{% endif %}">i</span></h3>
         </div>
         {% if 'cmhc' in field.source %}
         <span class="pill subtle-pill">Active</span>
@@ -55,13 +56,21 @@
       </div>
       <div class="source-mode-body">
         <div class="source-mode-value">
-          <strong>{{ market_match.market_reference.vacancy_rate_percent|percent1 }} vacancy</strong>
-          <p class="meta-line">{{ market_match.matched_market_name }} {{ market_match.match_type|title }}</p>
+          <strong>{{ cmhc_vacancy_value|percent1 ~ ' vacancy' if cmhc_vacancy_value is not none else 'Unavailable' }}</strong>
+          {% if market_match %}
+          <p class="meta-line">{{ market_match.matched_market_name }} · {{ market_match.reference_label or market_match.match_type|title }}</p>
+          {% if market_match.notes %}
+          <p class="meta-line">{{ market_match.notes }}</p>
+          {% endif %}
+          {% else %}
+          <p class="meta-line">No CMHC data available for this saved search.</p>
+          {% endif %}
         </div>
         <button
           type="submit"
           formaction="{{ url_for('use_cmhc_vacancy_default', saved_search_id=saved_search.id) }}"
           class="mini-button {% if 'cmhc' in field.source %}toggle-active{% endif %}"
+          {% if cmhc_vacancy_value is none %}disabled{% endif %}
         >
           Use CMHC
         </button>
@@ -357,6 +366,11 @@
       No saved buy box is active, so the table is using underwriting results only.
       {% endif %}
     </p>
+    <div class="card-actions">
+      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">
+        Market Context
+      </a>
+    </div>
   </div>
   <div class="hero-metrics hero-metrics-single">
     <div class="metric-card">
@@ -510,7 +524,7 @@
             <div class="source-mode-value">
               <strong>{{ cmhc_rent_value|currency if cmhc_rent_value is not none else 'Unavailable' }}</strong>
               {% if market_match %}
-              <p class="meta-line">{{ market_match.matched_market_name }} {{ market_match.match_type|title }}</p>
+              <p class="meta-line">{{ market_match.matched_market_name }} · {{ market_match.reference_label or market_match.match_type|title }}</p>
               {% if market_match.notes %}
               <p class="meta-line">{{ market_match.notes }}</p>
               {% endif %}
@@ -713,11 +727,62 @@
 <script>
   (() => {
     const key = "listingAnalysisScrollY:{{ saved_search.id }}";
+    const buyBoxDraftKey = "listingAnalysisBuyBoxDraft:{{ saved_search.id }}";
+    const buyBoxFieldNames = [
+      "buy_box_max_price",
+      "buy_box_beds_min",
+      "buy_box_property_type",
+      "buy_box_keywords",
+      "buy_box_ai_goal",
+    ];
+    const buyBoxFields = buyBoxFieldNames
+      .map((name) => document.querySelector(`[name="${name}"]`))
+      .filter(Boolean);
+
+    const readBuyBoxDraft = () => {
+      const draft = {};
+      buyBoxFields.forEach((field) => {
+        draft[field.name] = field.value;
+      });
+      return draft;
+    };
+
+    const writeBuyBoxDraft = () => {
+      sessionStorage.setItem(buyBoxDraftKey, JSON.stringify(readBuyBoxDraft()));
+    };
+
+    const restoreBuyBoxDraft = () => {
+      const rawDraft = sessionStorage.getItem(buyBoxDraftKey);
+      if (!rawDraft) {
+        return;
+      }
+      try {
+        const draft = JSON.parse(rawDraft);
+        buyBoxFields.forEach((field) => {
+          if (Object.prototype.hasOwnProperty.call(draft, field.name)) {
+            field.value = draft[field.name];
+          }
+        });
+      } catch {
+        sessionStorage.removeItem(buyBoxDraftKey);
+      }
+    };
+
+    restoreBuyBoxDraft();
+    buyBoxFields.forEach((field) => {
+      field.addEventListener("input", writeBuyBoxDraft);
+      field.addEventListener("change", writeBuyBoxDraft);
+    });
+
     const savedY = sessionStorage.getItem(key);
     if (savedY !== null) {
       sessionStorage.removeItem(key);
       requestAnimationFrame(() => window.scrollTo(0, Number(savedY) || 0));
     }
+
+    document.querySelectorAll('a[href*="clear_buy_box=1"]').forEach((link) => {
+      link.addEventListener("click", () => sessionStorage.removeItem(buyBoxDraftKey));
+    });
 
     document.addEventListener("submit", (event) => {
       const submitter = event.submitter;
@@ -726,6 +791,12 @@
         (submitter.classList.contains("mini-button") || submitter.classList.contains("button-primary"))
       ) {
         sessionStorage.setItem(key, String(window.scrollY));
+      }
+      if (submitter && submitter.classList.contains("mini-button")) {
+        writeBuyBoxDraft();
+      }
+      if (submitter && submitter.classList.contains("button-primary")) {
+        sessionStorage.removeItem(buyBoxDraftKey);
       }
     });
   })();

@@ -206,12 +206,31 @@ def normalize_location_fragment(value: str | None) -> str:
     return re.sub(r"\s+", " ", compact).strip()
 
 
+def location_search_parts(value: str | None) -> tuple[str, str | None]:
+    raw_parts = [part.strip() for part in (value or "").split(",") if part.strip()]
+    city = normalize_location_fragment(raw_parts[0] if raw_parts else value)
+    province = normalize_location_fragment(raw_parts[1]) if len(raw_parts) > 1 else None
+    return city, province
+
+
+def location_province_matches(address: str, province: str | None) -> bool:
+    if not province:
+        return True
+    aliases = {
+        "bc": ["bc", "british columbia"],
+        "b c": ["bc", "british columbia"],
+        "british columbia": ["bc", "british columbia"],
+    }
+    province_options = aliases.get(province, [province])
+    return any(option in address for option in province_options)
+
+
 def address_matches_requested_location(address: str | None, requested_location: str) -> bool:
     normalized_address = normalize_location_fragment(address)
-    normalized_requested = normalize_location_fragment(requested_location)
-    if not normalized_address or not normalized_requested:
+    city, province = location_search_parts(requested_location)
+    if not normalized_address or not city:
         return False
-    return normalized_requested in normalized_address
+    return city in normalized_address and location_province_matches(normalized_address, province)
 
 
 def prompt_optional_int(label: str, current: int | None = None, *, prompt_enabled: bool = True) -> int | None:
