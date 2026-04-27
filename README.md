@@ -16,6 +16,9 @@ Current prototype state:
 - Remaining Phase 1 follow-up: prove the inactive-listing transition with a controlled rerun
 - Local website prototype in place: dashboard, saved search detail view, listing detail, photo gallery, and background scrape launch
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
+- Webshare API proxy selection working: each scraper run can randomly select one valid proxy from the Webshare API list, with manual proxy config as fallback
+- Scraper performance pass completed: detail timing metrics, detail pause controls, optional detail asset blocking, and pagination stabilization are in place
+- Current scraper reliability issue: Realtor.ca began serving security-check pages after aggressive `14`/`16` detail-concurrency tests; challenge detection is now implemented and lower-concurrency retesting is needed
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
 - Buy-box persistence working: one saved buy box per saved search, now run from the combined listing-analysis workspace and shown on listing-detail pages
@@ -56,6 +59,8 @@ Current prototype state:
 - Accepts runtime search inputs for location, min/max price, minimum beds, and property type
 - Uses the visible Realtor.ca search UI to apply those filters
 - Supports broader collection controls for max pages, max listings, detail limit, and detail concurrency
+- Supports detail pacing controls with `--detail-pause-min` and `--detail-pause-max`
+- Supports optional detail-page asset blocking with `--block-detail-assets`
 - Waits, moves the mouse, and scrolls lightly
 - Collects matching listing summaries across result pages
 - Enriches detail pages with conservative low-risk concurrency
@@ -86,6 +91,8 @@ Current prototype state:
   - seeded appreciation history where an official series exists
 - Preserves selected market bedroom filters across market-page actions such as rental AI estimates and appreciation proxy/AI workflows
 - Supports a bulk StatCan market-metrics import workflow so matched BC markets can auto-fill `population`, `population growth`, `unemployment`, and `median household income`
+
+For the current scraper/proxy/performance handoff, see [docs/scraper_status.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/scraper_status.md:1).
 
 ## What It Is Not Yet
 
@@ -125,6 +132,20 @@ python scraper.py \
   --detail-limit 4 \
   --detail-concurrency 2
 
+# performance benchmark pass with explicit detail pacing
+python scraper.py \
+  --location Victoria \
+  --beds-min 2 \
+  --property-type house \
+  --max-price 1000000 \
+  --max-pages 1 \
+  --max-listings 12 \
+  --detail-limit 6 \
+  --detail-concurrency 3 \
+  --detail-pause-min 0.25 \
+  --detail-pause-max 0.6 \
+  --no-supabase
+
 # denser-market breadth test
 python scraper.py \
   --location Victoria \
@@ -135,6 +156,22 @@ python scraper.py \
   --max-listings 50 \
   --detail-limit 10 \
   --detail-concurrency 2
+
+# current cautious proxy-backed retest shape after security challenges
+python scraper.py \
+  --location Victoria \
+  --beds-min 2 \
+  --property-type house \
+  --max-price 1000000 \
+  --max-pages 1 \
+  --max-listings 12 \
+  --detail-limit 12 \
+  --detail-concurrency 4 \
+  --detail-pause-min 0.2 \
+  --detail-pause-max 0.5 \
+  --block-detail-assets \
+  --no-supabase \
+  --no-print-listings
 
 # run the first local website scaffold
 python app.py
@@ -165,11 +202,61 @@ Current config surface:
 - `OPENAI_API_KEY` for AI buy-box analysis and AI rent suggestions
 - `OPENAI_BUY_BOX_MODEL` optional override for buy-box AI analysis
 - `OPENAI_UNDERWRITING_MODEL` optional override for rent suggestion analysis
+- `WEBSHARE_API_KEY` optional Webshare API key for automatic proxy-list selection
+- `WEBSHARE_PROXY_MODE` optional Webshare proxy mode, either `direct` or `backbone`; defaults to `direct`
+- `WEBSHARE_PROXY_COUNTRY_CODES` optional comma-separated Webshare country filter, for example `CA,US`
+- `SCRAPER_PROXY_ENABLED` optional proxy toggle for Playwright scraper runs
+- `SCRAPER_PROXY_SERVER` optional proxy server, for example `http://p.webshare.io:80`
+- `SCRAPER_PROXY_USERNAME` optional proxy username
+- `SCRAPER_PROXY_PASSWORD` optional proxy password
 
 Important notes:
 
 - Supabase is required for the persistent saved-search, scrape-history, and listing-analysis workflow.
 - OpenAI configuration is optional. Without it, the core scraper, Supabase flow, and non-AI underwriting still work, but AI buy-box and AI rent features are unavailable.
+- Scraper proxy configuration is optional. When `WEBSHARE_API_KEY` is set, the scraper fetches the current Webshare proxy list and randomly selects a valid proxy. If the API lookup fails or returns no valid proxies, it falls back to the manual `SCRAPER_PROXY_*` fields. Playwright logs only the proxy host/port.
+- The latest speed tests triggered Realtor.ca security-check pages after aggressive detail concurrency. Treat `--detail-concurrency 12` as a historical best, not a currently safe default, until lower-concurrency retesting is clean.
+
+### Webshare Residential Proxy Setup
+
+For Webshare Proxy Server plans, prefer API-based selection so you do not need to manually update `.env.local` when Webshare replaces or rotates IPs.
+
+Example `.env.local` values:
+
+```bash
+WEBSHARE_API_KEY=your_webshare_api_key
+WEBSHARE_PROXY_MODE=direct
+WEBSHARE_PROXY_COUNTRY_CODES=CA,US
+```
+
+The scraper supports two modes:
+
+- `direct` selects one proxy-list IP and port from Webshare's API response.
+- `backbone` uses `p.webshare.io` with credentials from the selected proxy row.
+
+Manual proxy values are still supported as a fallback. If Webshare gives you a full proxy URL like `http://username:password@host:port`, split it into:
+
+```bash
+SCRAPER_PROXY_ENABLED=true
+SCRAPER_PROXY_SERVER=http://host-or-endpoint:port
+SCRAPER_PROXY_USERNAME=your_webshare_username
+SCRAPER_PROXY_PASSWORD=your_webshare_password
+```
+
+Run a small validation scrape before increasing limits:
+
+```bash
+python scraper.py \
+  --location Victoria \
+  --beds-min 2 \
+  --property-type house \
+  --max-price 1000000 \
+  --max-pages 1 \
+  --max-listings 3 \
+  --detail-limit 1 \
+  --detail-concurrency 1 \
+  --no-supabase
+```
 
 ## Supabase
 
@@ -220,11 +307,14 @@ What is already working in the integrated flow:
 
 - the scraper can collect broader result sets across multiple pages
 - the scraper can stop at configurable summary and detail caps
-- the scraper can enrich detail pages with `detail_concurrency=2`
+- the scraper can enrich detail pages with configurable detail concurrency and randomized detail pacing
 - repeat runs can reuse recently scraped, fully enriched listing detail instead of visiting every detail page again
 - the scraper can extract richer detail fields directly into the same JSON output
 - the scraper can extract listing photos and persist them inside the stored raw listing payload
 - the browser-first headed Playwright plus `playwright-stealth` setup remained stable during larger runs
+- the scraper can use Webshare API-selected proxies and logs the selected host/port without credentials
+- the scraper can optionally block nonessential detail-page assets to reduce bandwidth and load time
+- the scraper detects Realtor.ca security-check pages and stops queued detail work instead of blindly retrying challenged tabs
 - the scraper now starts from a neutral Realtor.ca map page rather than a Victoria-specific hard-coded map state
 - the scraper now runs location-based collection without relying on `Search within boundary`
 - the scraper now waits for a settled results state before collection and uses more robust page-2 navigation fallbacks
@@ -241,6 +331,14 @@ Example historical validated outcome:
 - successfully upserted validated listing data into Supabase in live testing
 
 This block is included as an example of a successful validation pass, not as a claim about current live market counts.
+
+Recent performance validation:
+
+- `60` Victoria summaries across `5` results pages collected successfully after pagination stabilization.
+- `60/60` detail enrichment succeeded at `detail_concurrency=12` before security challenges appeared.
+- `--block-detail-assets` reduced the best 60-listing run from `106.1s` total to `90.9s` total, with photos still present for every listing.
+- `detail_concurrency=14` and `16` caused many first-pass detail failures and visible Realtor.ca security-check pages.
+- A later `detail_concurrency=12` rerun also showed security-check pages, so the next scraper pass should retest lower concurrency first. See [docs/scraper_status.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/scraper_status.md:1).
 
 Current enriched fields include:
 

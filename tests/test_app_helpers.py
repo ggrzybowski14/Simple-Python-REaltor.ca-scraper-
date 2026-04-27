@@ -170,11 +170,13 @@ def test_build_scrape_args_omits_zero_beds_filter() -> None:
                 "max_listings": "25",
                 "detail_limit": "25",
                 "detail_concurrency": "2",
+                "block_detail_assets": "1",
             }
         )
     )
 
     assert "--beds-min" not in args
+    assert "--block-detail-assets" in args
 
 
 def test_build_scrape_args_from_saved_search_omits_zero_beds_filter() -> None:

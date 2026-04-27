@@ -8,10 +8,11 @@ import os
 import random
 import re
 import sys
-from urllib import error, parse, request
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib import error, parse, request
 
 from market_data import build_market_profile_from_saved_search
 from market_data import get_market_seed_bootstrap_payload
@@ -28,8 +29,26 @@ DEFAULT_DETAIL_LIMIT = 25
 DEFAULT_DETAIL_CONCURRENCY = 2
 ARTIFACTS_DIR = Path("artifacts")
 OUTPUTS_DIR = Path("outputs")
-TOP_FILTER_WAIT_MS = 900
+TOP_FILTER_WAIT_MS = 600
+PROPERTY_FILTER_WAIT_MS = 800
+POPUP_BUTTON_TIMEOUT_MS = 600
 RESULT_CARD_SELECTOR = "div.cardCon, article.cardCon"
+DETAIL_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+DETAIL_BLOCKED_URL_TERMS = (
+    "google-analytics",
+    "googletagmanager",
+    "doubleclick",
+    "facebook.net",
+    "hotjar",
+    "clarity.ms",
+    "optimizely",
+    "adservice",
+)
+SECURITY_CHALLENGE_TERMS = (
+    "additional security check is required",
+    "click to verify",
+    "verify that you are an actual human",
+)
 PROPERTY_TYPE_OPTIONS = {
     "house": {"value": "1", "label": "House"},
     "apartment": {"value": "17", "label": "Apartment"},
@@ -52,12 +71,26 @@ class ScrapeLimits:
     max_listings: int = DEFAULT_MAX_LISTINGS
     detail_limit: int = DEFAULT_DETAIL_LIMIT
     detail_concurrency: int = DEFAULT_DETAIL_CONCURRENCY
+    detail_pause_min: float = 0.25
+    detail_pause_max: float = 0.6
+    block_detail_assets: bool = False
 
 
 @dataclass
 class SupabaseConfig:
     url: str
     key: str
+
+
+@dataclass
+class ProxyConfig:
+    server: str
+    username: str | None = None
+    password: str | None = None
+
+
+class SecurityChallengeError(RuntimeError):
+    pass
 
 
 def configure_logging() -> None:
@@ -83,11 +116,15 @@ async def move_mouse_like_human(page: Page) -> None:
         await human_pause(0.08, 0.22)
 
 
-async def variable_listing_pause() -> None:
+async def variable_listing_pause(min_seconds: float = 0.25, max_seconds: float = 0.6) -> None:
     if random.random() < 0.2:
-        await human_pause(1.0, 1.8)
+        await human_pause(max(min_seconds, 1.0), max(max_seconds, 1.8))
     else:
-        await human_pause(0.25, 0.6)
+        await human_pause(min_seconds, max_seconds)
+
+
+def elapsed_seconds(started_at: float) -> float:
+    return round(time.perf_counter() - started_at, 3)
 
 
 async def save_failure_artifacts(page: Page, label: str) -> None:
@@ -140,7 +177,7 @@ async def dismiss_popups_if_present(page: Page) -> None:
     ]
     for pattern in patterns:
         try:
-            await page.get_by_role("button", name=re.compile(pattern, re.I)).click(timeout=2500)
+            await page.get_by_role("button", name=re.compile(pattern, re.I)).click(timeout=POPUP_BUTTON_TIMEOUT_MS)
             logging.info("Clicked popup button matching '%s'", pattern)
             await human_pause(0.2, 0.5)
             return
@@ -151,15 +188,185 @@ async def dismiss_popups_if_present(page: Page) -> None:
             continue
 
 
+def env_flag_enabled(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_proxy_server(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("SCRAPER_PROXY_SERVER cannot be empty when proxying is enabled")
+    if "://" not in cleaned:
+        return f"http://{cleaned}"
+    return cleaned
+
+
+def should_block_detail_request(resource_type: str, url: str) -> bool:
+    if resource_type in DETAIL_BLOCKED_RESOURCE_TYPES:
+        return True
+    lowered_url = url.lower()
+    return any(term in lowered_url for term in DETAIL_BLOCKED_URL_TERMS)
+
+
+def text_has_security_challenge(value: str | None) -> bool:
+    if not value:
+        return False
+    lowered = value.lower()
+    return any(term in lowered for term in SECURITY_CHALLENGE_TERMS)
+
+
+async def page_has_security_challenge(page: Page) -> bool:
+    try:
+        return text_has_security_challenge(await page.locator("body").inner_text(timeout=1500))
+    except Exception:
+        return False
+
+
+def build_proxy_config_from_webshare_proxy(row: dict[str, Any], *, mode: str = "direct") -> ProxyConfig | None:
+    if row.get("valid") is False:
+        return None
+    username = row.get("username")
+    password = row.get("password")
+    port = row.get("port")
+    proxy_address = row.get("proxy_address")
+    if not username or not password or not port:
+        return None
+
+    clean_mode = (mode or "direct").strip().lower()
+    if clean_mode == "backbone":
+        server_host = "p.webshare.io"
+    else:
+        server_host = proxy_address
+    if not server_host:
+        return None
+
+    return ProxyConfig(
+        server=normalize_proxy_server(f"{server_host}:{port}"),
+        username=str(username),
+        password=str(password),
+    )
+
+
+def fetch_webshare_proxy_configs(
+    api_key: str,
+    *,
+    mode: str = "direct",
+    country_codes: str | None = None,
+    page_size: int = 100,
+) -> list[ProxyConfig]:
+    clean_mode = (mode or "direct").strip().lower()
+    if clean_mode not in {"direct", "backbone"}:
+        raise ValueError("WEBSHARE_PROXY_MODE must be either 'direct' or 'backbone'")
+
+    query: dict[str, Any] = {
+        "mode": clean_mode,
+        "page": 1,
+        "page_size": page_size,
+    }
+    if country_codes:
+        query["country_code__in"] = country_codes
+    endpoint = f"https://proxy.webshare.io/api/v2/proxy/list/?{parse.urlencode(query)}"
+    req = request.Request(
+        endpoint,
+        headers={
+            "Authorization": f"Token {api_key}",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Webshare API request failed with status {exc.code}: {details}") from exc
+    except error.URLError as exc:
+        raise RuntimeError(f"Webshare API request failed: {exc.reason}") from exc
+
+    rows = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("Webshare API response did not include a proxy results list")
+
+    configs = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        config = build_proxy_config_from_webshare_proxy(row, mode=clean_mode)
+        if config is not None:
+            configs.append(config)
+    return configs
+
+
+def get_env_proxy_config() -> ProxyConfig | None:
+    enabled = env_flag_enabled(os.getenv("SCRAPER_PROXY_ENABLED"))
+    server = os.getenv("SCRAPER_PROXY_SERVER")
+
+    if not server:
+        if enabled:
+            raise ValueError("SCRAPER_PROXY_SERVER is required when SCRAPER_PROXY_ENABLED=true")
+        return None
+
+    username = os.getenv("SCRAPER_PROXY_USERNAME") or None
+    password = os.getenv("SCRAPER_PROXY_PASSWORD") or None
+    if bool(username) != bool(password):
+        raise ValueError("SCRAPER_PROXY_USERNAME and SCRAPER_PROXY_PASSWORD must be set together")
+
+    return ProxyConfig(
+        server=normalize_proxy_server(server),
+        username=username,
+        password=password,
+    )
+
+
+def get_scraper_proxy_config() -> ProxyConfig | None:
+    api_key = (os.getenv("WEBSHARE_API_KEY") or "").strip()
+    if api_key:
+        mode = os.getenv("WEBSHARE_PROXY_MODE", "direct")
+        country_codes = os.getenv("WEBSHARE_PROXY_COUNTRY_CODES") or None
+        try:
+            configs = fetch_webshare_proxy_configs(api_key, mode=mode, country_codes=country_codes)
+        except Exception as exc:
+            logging.warning("Webshare API proxy lookup failed; falling back to SCRAPER_PROXY_* config: %s", exc)
+        else:
+            if configs:
+                selected = random.choice(configs)
+                logging.info("Selected Webshare API proxy from %s valid candidate(s)", len(configs))
+                return selected
+            logging.warning("Webshare API returned no valid proxies; falling back to SCRAPER_PROXY_* config")
+
+    return get_env_proxy_config()
+
+def describe_proxy_config(proxy_config: ProxyConfig) -> str:
+    parsed = parse.urlparse(proxy_config.server)
+    host = parsed.hostname or proxy_config.server
+    port = f":{parsed.port}" if parsed.port else ""
+    scheme = f"{parsed.scheme}://" if parsed.scheme else ""
+    auth_label = "authenticated" if proxy_config.username and proxy_config.password else "unauthenticated"
+    return f"{scheme}{host}{port} ({auth_label})"
+
+
 async def build_context(playwright) -> BrowserContext:
     logging.info("Launching visible Chromium browser")
-    browser = await playwright.chromium.launch(
-        headless=False,
-        slow_mo=60,
-        args=[
+    proxy_config = get_scraper_proxy_config()
+    launch_options: dict[str, Any] = {
+        "headless": False,
+        "slow_mo": 60,
+        "args": [
             "--disable-blink-features=AutomationControlled",
             "--deny-permission-prompts",
         ],
+    }
+    if proxy_config is not None:
+        proxy_options = {"server": proxy_config.server}
+        if proxy_config.username and proxy_config.password:
+            proxy_options["username"] = proxy_config.username
+            proxy_options["password"] = proxy_config.password
+        launch_options["proxy"] = proxy_options
+        logging.info("Browser proxy enabled: %s", describe_proxy_config(proxy_config))
+
+    browser = await playwright.chromium.launch(
+        **launch_options,
     )
     context = await browser.new_context(
         viewport={"width": 1440, "height": 960},
@@ -186,8 +393,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-listings", type=int, default=DEFAULT_MAX_LISTINGS)
     parser.add_argument("--detail-limit", type=int, default=DEFAULT_DETAIL_LIMIT)
     parser.add_argument("--detail-concurrency", type=int, default=DEFAULT_DETAIL_CONCURRENCY)
+    parser.add_argument("--detail-pause-min", type=float, default=0.25)
+    parser.add_argument("--detail-pause-max", type=float, default=0.6)
+    parser.add_argument(
+        "--block-detail-assets",
+        action="store_true",
+        help="Block detail-page images, media, fonts, and common tracking requests while scraping",
+    )
     parser.add_argument("--save-to-supabase", action="store_true", help="Upsert scraped listings into Supabase")
     parser.add_argument("--no-supabase", action="store_true", help="Disable Supabase writes even if env vars are present")
+    parser.add_argument("--no-print-listings", action="store_true", help="Skip printing full listing payloads after a run")
     return parser.parse_args()
 
 
@@ -276,11 +491,18 @@ def collect_scrape_limits(args: argparse.Namespace) -> ScrapeLimits:
         raise ValueError("--detail-limit cannot be negative")
     if args.detail_concurrency < 1:
         raise ValueError("--detail-concurrency must be at least 1")
+    if args.detail_pause_min < 0:
+        raise ValueError("--detail-pause-min cannot be negative")
+    if args.detail_pause_max < args.detail_pause_min:
+        raise ValueError("--detail-pause-max must be greater than or equal to --detail-pause-min")
     return ScrapeLimits(
         max_pages=args.max_pages,
         max_listings=args.max_listings,
         detail_limit=args.detail_limit,
         detail_concurrency=args.detail_concurrency,
+        detail_pause_min=args.detail_pause_min,
+        detail_pause_max=args.detail_pause_max,
+        block_detail_assets=args.block_detail_assets,
     )
 
 
@@ -370,15 +592,73 @@ async def wait_for_results_refresh(page: Page, previous_url: str | None = None) 
 async def snapshot_results_state(page: Page) -> tuple[int | None, str | None, tuple[str, ...]]:
     results_count = await extract_results_count(page)
     page_indicator = await extract_page_indicator(page)
-    links = page.locator(f"{RESULT_CARD_SELECTOR} a[href*='/real-estate/'], {RESULT_CARD_SELECTOR} a[href*='/real-estate-properties/']")
-    link_count = min(await links.count(), 12)
+    urls = await get_visible_listing_urls(page)
+    return results_count, page_indicator, urls
+
+
+async def get_visible_listing_urls(page: Page, limit: int = 12) -> tuple[str, ...]:
+    cards = page.locator(RESULT_CARD_SELECTOR).filter(
+        has=page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']")
+    )
+    card_count = min(await cards.count(), limit)
     urls: list[str] = []
-    for index in range(link_count):
-        href = await links.nth(index).get_attribute("href")
-        if not href:
+    for index in range(card_count):
+        link = cards.nth(index).locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").first
+        try:
+            if await link.count() == 0:
+                continue
+            href = await link.get_attribute("href", timeout=1500)
+            if not href:
+                continue
+        except TimeoutError:
             continue
         urls.append(f"https://www.realtor.ca{href}" if href.startswith("/") else href)
-    return results_count, page_indicator, tuple(urls)
+    return tuple(urls)
+
+
+async def wait_for_visible_listing_urls_to_stabilize(
+    page: Page,
+    *,
+    expected_page: int | None = None,
+    previous_urls: tuple[str, ...] = (),
+    minimum_urls: int = 1,
+) -> tuple[str, ...]:
+    stable_samples = 0
+    previous_sample: tuple[str, ...] | None = None
+    last_urls: tuple[str, ...] = ()
+
+    for _ in range(16):
+        page_indicator = parse_page_indicator(await extract_page_indicator(page))
+        urls = await get_visible_listing_urls(page)
+        page_matches = expected_page is None or (page_indicator is not None and page_indicator[0] == expected_page)
+        has_minimum = len(urls) >= minimum_urls
+        changed_from_previous = not previous_urls or bool(set(urls) - set(previous_urls))
+
+        logging.info(
+            "Card stabilization sample | expected_page=%s | page_indicator=%s | urls=%s | changed=%s",
+            expected_page or "unknown",
+            f"{page_indicator[0]} of {page_indicator[1]}" if page_indicator else "unknown",
+            len(urls),
+            changed_from_previous,
+        )
+
+        if page_matches and has_minimum and changed_from_previous and urls == previous_sample:
+            stable_samples += 1
+        else:
+            stable_samples = 0
+
+        previous_sample = urls
+        last_urls = urls
+        if stable_samples >= 1:
+            return urls
+        await page.wait_for_timeout(500)
+
+    logging.warning(
+        "Visible listing URLs did not fully stabilize; expected_page=%s | last_url_count=%s",
+        expected_page or "unknown",
+        len(last_urls),
+    )
+    return last_urls
 
 
 async def wait_for_results_stabilization(page: Page) -> tuple[int | None, str | None]:
@@ -574,7 +854,7 @@ async def apply_property_type(page: Page, property_type: str) -> None:
     await set_select_value(page, "#ddlBuildingType", value=option["value"])
     await human_pause(0.2, 0.45)
     await page.locator("#mapMoreFiltersSearchBtn").click()
-    await page.wait_for_timeout(1200)
+    await page.wait_for_timeout(PROPERTY_FILTER_WAIT_MS)
     await wait_for_results_refresh(page, previous_url)
 
 
@@ -968,6 +1248,9 @@ def build_run_payload(
             "max_listings": limits.max_listings,
             "detail_limit": limits.detail_limit,
             "detail_concurrency": limits.detail_concurrency,
+            "detail_pause_min": limits.detail_pause_min,
+            "detail_pause_max": limits.detail_pause_max,
+            "block_detail_assets": limits.block_detail_assets,
         },
         "run_started_at": run_started_at,
         "run_finished_at": run_finished_at,
@@ -976,6 +1259,7 @@ def build_run_payload(
         "detail_attempted": scrape_result["detail_attempted"],
         "detail_succeeded": scrape_result["detail_succeeded"],
         "failed_detail_urls": scrape_result["failed_detail_urls"],
+        "timings": scrape_result.get("timings", {}),
         "listing_count": len(scrape_result["listings"]),
         "listing_summaries": scrape_result["listing_summaries"],
         "listings": scrape_result["listings"],
@@ -1480,20 +1764,49 @@ def save_to_supabase(config: SupabaseConfig, payload: dict[str, Any]) -> int:
     return linked_count
 
 
-async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -> dict[str, Any]:
+async def configure_detail_request_blocking(detail_page: Page) -> None:
+    async def route_request(route) -> None:
+        req = route.request
+        if should_block_detail_request(req.resource_type, req.url):
+            await route.abort()
+            return
+        await route.continue_()
+
+    await detail_page.route("**/*", route_request)
+
+
+async def scrape_detail_page(
+    context: BrowserContext,
+    listing: dict[str, Any],
+    *,
+    block_assets: bool = False,
+) -> dict[str, Any]:
     detail_page = await context.new_page()
     try:
+        if block_assets:
+            await configure_detail_request_blocking(detail_page)
         logging.info("Opening detail page: %s", listing["url"])
         await detail_page.goto(listing["url"], wait_until="domcontentloaded")
+        if await page_has_security_challenge(detail_page):
+            raise SecurityChallengeError("Realtor.ca security challenge detected")
         await human_pause(0.8, 1.3)
         await dismiss_popups_if_present(detail_page)
+        if await page_has_security_challenge(detail_page):
+            raise SecurityChallengeError("Realtor.ca security challenge detected")
         await move_mouse_like_human(detail_page)
         await detail_page.mouse.wheel(0, random.randint(250, 600))
         await human_pause(0.2, 0.45)
+        if await page_has_security_challenge(detail_page):
+            raise SecurityChallengeError("Realtor.ca security challenge detected")
 
-        await detail_page.locator("text=/MLS.*Number|Property Summary|Listing Description/i").first.wait_for(
-            timeout=15000
-        )
+        try:
+            await detail_page.locator("text=/MLS.*Number|Property Summary|Listing Description/i").first.wait_for(
+                timeout=15000
+            )
+        except TimeoutError:
+            if await page_has_security_challenge(detail_page):
+                raise SecurityChallengeError("Realtor.ca security challenge detected") from None
+            raise
         logging.info("Detail page loaded for %s", listing["url"])
 
         detail_text = await detail_page.locator("body").inner_text()
@@ -1590,7 +1903,6 @@ async def scrape_detail_page(context: BrowserContext, listing: dict[str, Any]) -
 async def collect_listing_summaries_from_current_page(
     page: Page,
     limit: int,
-    requested_location: str,
 ) -> list[dict[str, Any]]:
     cards = page.locator(RESULT_CARD_SELECTOR).filter(
         has=page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']")
@@ -1609,14 +1921,6 @@ async def collect_listing_summaries_from_current_page(
         listing = await scrape_card(card)
         if not listing:
             continue
-        if not address_matches_requested_location(listing.get("address"), requested_location):
-            logging.warning(
-                "Discarding listing outside requested location '%s': %s | %s",
-                requested_location,
-                listing.get("address") or "unknown address",
-                listing["url"],
-            )
-            continue
         listings_by_url.setdefault(listing["url"], listing)
         if len(listings_by_url) >= limit:
             break
@@ -1624,7 +1928,7 @@ async def collect_listing_summaries_from_current_page(
     return list(listings_by_url.values())[:limit]
 
 
-async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
+async def go_to_next_results_page(page: Page, previous_urls: tuple[str, ...]) -> bool:
     page_indicator = parse_page_indicator(await extract_page_indicator(page))
     if page_indicator and page_indicator[0] >= page_indicator[1]:
         logging.info("Already on final results page (%s of %s)", page_indicator[0], page_indicator[1])
@@ -1684,28 +1988,68 @@ async def go_to_next_results_page(page: Page, previous_first_url: str) -> bool:
         )
         return False
 
-    await human_pause(0.3, 0.7)
+    await human_pause(0.15, 0.35)
 
     try:
         await page.wait_for_function(
             """
-            ({ previousUrl, expectedPage }) => {
+            ({ expectedPage }) => {
                 if (expectedPage) {
                     const currentUrl = window.location.href;
                     if (currentUrl.includes(`CurrentPage=${expectedPage}`)) {
                         return true;
                     }
                 }
-                const links = Array.from(document.querySelectorAll("a[href*='/real-estate/'], a[href*='/real-estate-properties/']"));
-                return links.some(link => link.getAttribute('href') && !link.getAttribute('href').includes(previousUrl.split('/').pop()));
+                return false;
             }
             """,
-            arg={"previousUrl": previous_first_url, "expectedPage": expected_next_page},
+            arg={"expectedPage": expected_next_page},
             timeout=15000,
         )
     except TimeoutError:
-        logging.warning("Timed out waiting for next results page to change")
+        logging.warning("Timed out waiting for next results URL to change")
         return False
+
+    stabilized_urls = await wait_for_visible_listing_urls_to_stabilize(
+        page,
+        expected_page=expected_next_page,
+        previous_urls=previous_urls,
+        minimum_urls=1,
+    )
+    refreshed_page_indicator = parse_page_indicator(await extract_page_indicator(page))
+    changed_from_previous = bool(set(stabilized_urls) - set(previous_urls))
+    page_matches = expected_next_page is None or (
+        refreshed_page_indicator is not None and refreshed_page_indicator[0] == expected_next_page
+    )
+
+    if not changed_from_previous or not page_matches:
+        logging.warning(
+            "Next page URL changed before rendered cards updated; reloading current results URL once | expected_page=%s | page_indicator=%s | changed=%s",
+            expected_next_page or "unknown",
+            f"{refreshed_page_indicator[0]} of {refreshed_page_indicator[1]}" if refreshed_page_indicator else "unknown",
+            changed_from_previous,
+        )
+        await page.reload(wait_until="domcontentloaded")
+        await human_pause(0.3, 0.7)
+        stabilized_urls = await wait_for_visible_listing_urls_to_stabilize(
+            page,
+            expected_page=expected_next_page,
+            previous_urls=previous_urls,
+            minimum_urls=1,
+        )
+        refreshed_page_indicator = parse_page_indicator(await extract_page_indicator(page))
+        changed_from_previous = bool(set(stabilized_urls) - set(previous_urls))
+        page_matches = expected_next_page is None or (
+            refreshed_page_indicator is not None and refreshed_page_indicator[0] == expected_next_page
+        )
+        if not changed_from_previous or not page_matches:
+            logging.warning(
+                "Next page did not render new cards after reload; stopping pagination | expected_page=%s | page_indicator=%s | changed=%s",
+                expected_next_page or "unknown",
+                f"{refreshed_page_indicator[0]} of {refreshed_page_indicator[1]}" if refreshed_page_indicator else "unknown",
+                changed_from_previous,
+            )
+            return False
 
     await log_results_snapshot(page, "After page transition")
     return True
@@ -1715,7 +2059,6 @@ async def collect_listing_summaries_across_pages(
     page: Page,
     page_limit: int,
     total_limit: int,
-    requested_location: str,
 ) -> list[dict[str, Any]]:
     logging.info(
         "Collecting up to %s listing(s) across %s results page(s)",
@@ -1730,11 +2073,18 @@ async def collect_listing_summaries_across_pages(
         if remaining <= 0:
             break
 
+        page_indicator = parse_page_indicator(await extract_page_indicator(page))
+        expected_current_page = page_indicator[0] if page_indicator else page_index
+        await wait_for_visible_listing_urls_to_stabilize(
+            page,
+            expected_page=expected_current_page,
+            minimum_urls=min(remaining, 12),
+        )
         await log_results_snapshot(page, f"Before scanning results page {page_index}")
+        current_urls = await get_visible_listing_urls(page)
         page_listings = await collect_listing_summaries_from_current_page(
             page,
             remaining,
-            requested_location,
         )
         page_listings = [listing for listing in page_listings if listing["url"] not in seen_urls]
 
@@ -1760,8 +2110,7 @@ async def collect_listing_summaries_across_pages(
         if page_indicator and page_indicator[0] >= page_indicator[1]:
             break
 
-        first_url = page_listings[0]["url"]
-        if not await go_to_next_results_page(page, first_url):
+        if not await go_to_next_results_page(page, current_urls):
             break
 
     return collected
@@ -1771,13 +2120,29 @@ async def enrich_detail_worker(
     context: BrowserContext,
     listing: dict[str, Any],
     semaphore: asyncio.Semaphore,
-) -> tuple[dict[str, Any] | None, str | None]:
+    detail_pause_min: float,
+    detail_pause_max: float,
+    block_detail_assets: bool,
+    challenge_detected: asyncio.Event,
+) -> tuple[dict[str, Any] | None, str | None, bool]:
     async with semaphore:
-        await variable_listing_pause()
+        if challenge_detected.is_set():
+            logging.warning("Skipping queued detail page after security challenge: %s", listing["url"])
+            return None, listing["url"], True
+        await variable_listing_pause(detail_pause_min, detail_pause_max)
+        started_at = time.perf_counter()
         try:
-            return await scrape_detail_page(context, listing), None
+            result = await scrape_detail_page(context, listing, block_assets=block_detail_assets)
+            logging.info("Detail timing | seconds=%s | url=%s", elapsed_seconds(started_at), listing["url"])
+            return result, None, False
+        except SecurityChallengeError:
+            challenge_detected.set()
+            logging.warning("Security challenge detected on detail page; stopping queued detail work: %s", listing["url"])
+            logging.info("Detail timing | seconds=%s | blocked=true | url=%s", elapsed_seconds(started_at), listing["url"])
+            return None, listing["url"], True
         except Exception:
-            return None, listing["url"]
+            logging.info("Detail timing | seconds=%s | failed=true | url=%s", elapsed_seconds(started_at), listing["url"])
+            return None, listing["url"], False
 
 
 async def enrich_listings(
@@ -1785,6 +2150,9 @@ async def enrich_listings(
     listings: list[dict[str, Any]],
     detail_limit: int,
     detail_concurrency: int,
+    detail_pause_min: float,
+    detail_pause_max: float,
+    block_detail_assets: bool,
     existing_listing_rows: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], int, int]:
     existing_listing_rows = existing_listing_rows or {}
@@ -1802,22 +2170,37 @@ async def enrich_listings(
     if reused_listings:
         logging.info("Reusing recent detail data for %s listing(s)", len(reused_listings))
 
-    semaphore = asyncio.Semaphore(detail_concurrency)
-
-    async def run_batch(targets: list[dict[str, Any]], concurrency: int) -> tuple[list[dict[str, Any]], list[str]]:
+    async def run_batch(targets: list[dict[str, Any]], concurrency: int) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         local_semaphore = asyncio.Semaphore(concurrency)
+        challenge_detected = asyncio.Event()
         tasks = [
-            asyncio.create_task(enrich_detail_worker(context, listing, local_semaphore))
+            asyncio.create_task(
+                enrich_detail_worker(
+                    context,
+                    listing,
+                    local_semaphore,
+                    detail_pause_min,
+                    detail_pause_max,
+                    block_detail_assets,
+                    challenge_detected,
+                )
+            )
             for listing in targets
         ]
         batch_results = await asyncio.gather(*tasks)
-        enriched = [item for item, failed in batch_results if item is not None]
-        failed_urls = [failed for item, failed in batch_results if failed is not None]
-        return enriched, failed_urls
+        enriched = [item for item, failed, blocked in batch_results if item is not None]
+        failed_urls = [failed for item, failed, blocked in batch_results if failed is not None]
+        challenge_urls = [failed for item, failed, blocked in batch_results if failed is not None and blocked]
+        return enriched, failed_urls, challenge_urls
 
-    enriched_listings, failed_urls = await run_batch(listings_to_enrich, detail_concurrency)
+    enriched_listings, failed_urls, challenge_urls = await run_batch(listings_to_enrich, detail_concurrency)
 
-    if failed_urls and detail_concurrency > 1 and len(failed_urls) >= 3:
+    if challenge_urls:
+        logging.warning(
+            "Security challenge detected for %s detail page(s); skipping automatic retries for this run",
+            len(challenge_urls),
+        )
+    elif failed_urls and detail_concurrency > 1 and len(failed_urls) >= 3:
         logging.warning(
             "Detail failures reached %s with concurrency=%s; retrying failed detail pages sequentially",
             len(failed_urls),
@@ -1825,11 +2208,16 @@ async def enrich_listings(
         )
         failed_map = {listing["url"]: listing for listing in listings_to_enrich}
         retry_targets = [failed_map[url] for url in failed_urls if url in failed_map]
-        retry_results, retry_failed_urls = await run_batch(retry_targets, 1)
+        retry_results, retry_failed_urls, retry_challenge_urls = await run_batch(retry_targets, 1)
         retry_urls = {listing["url"] for listing in retry_results}
         enriched_listings.extend(retry_results)
         failed_urls = [url for url in failed_urls if url not in retry_urls]
         failed_urls = [url for url in failed_urls if url in retry_failed_urls or url not in retry_urls]
+        if retry_challenge_urls:
+            logging.warning(
+                "Security challenge detected during sequential retry for %s detail page(s)",
+                len(retry_challenge_urls),
+            )
 
     combined_enriched = reused_listings + enriched_listings
     enriched_by_url = {listing["url"]: listing for listing in combined_enriched}
@@ -1838,43 +2226,59 @@ async def enrich_listings(
 
 
 async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dict[str, Any]:
+    scrape_started_at = time.perf_counter()
+    timings: dict[str, float] = {}
     async with async_playwright() as playwright:
+        browser_started_at = time.perf_counter()
         context = await build_context(playwright)
+        timings["browser_launch_seconds"] = elapsed_seconds(browser_started_at)
         logging.info("Applying playwright-stealth")
         await Stealth().apply_stealth_async(context)
         page = await context.new_page()
 
         try:
+            setup_started_at = time.perf_counter()
+            start_url_started_at = time.perf_counter()
             logging.info("Opening start URL")
             await page.goto(START_URL, wait_until="domcontentloaded")
-            await human_pause(0.8, 1.4)
+            await human_pause(0.3, 0.7)
+            timings["start_url_open_seconds"] = elapsed_seconds(start_url_started_at)
 
+            pre_filter_started_at = time.perf_counter()
             await dismiss_popups_if_present(page)
             await move_mouse_like_human(page)
             await page.mouse.wheel(0, random.randint(180, 420))
             await human_pause(0.2, 0.45)
+            timings["pre_filter_behavior_seconds"] = elapsed_seconds(pre_filter_started_at)
 
+            filter_started_at = time.perf_counter()
             await apply_search_criteria(page, criteria)
+            timings["filter_application_seconds"] = elapsed_seconds(filter_started_at)
+            timings["search_setup_seconds"] = elapsed_seconds(setup_started_at)
 
             logging.info("Waiting for listing links to appear")
+            stabilization_started_at = time.perf_counter()
             await wait_for_listings(page)
             results_count, stabilized_page_indicator = await wait_for_results_stabilization(page)
+            timings["results_stabilization_seconds"] = elapsed_seconds(stabilization_started_at)
             if stabilized_page_indicator:
                 logging.info("Settled page indicator before collection: %s", stabilized_page_indicator)
 
             visible_link_count = await page.locator("a[href*='/real-estate/'], a[href*='/real-estate-properties/']").count()
             logging.info("Found %s listing links after applying filters", visible_link_count)
 
+            summary_started_at = time.perf_counter()
             summaries = await collect_listing_summaries_across_pages(
                 page,
                 page_limit=limits.max_pages,
                 total_limit=limits.max_listings,
-                requested_location=criteria.location,
             )
+            timings["summary_collection_seconds"] = elapsed_seconds(summary_started_at)
 
             if not summaries:
                 raise RuntimeError("No listing data was extracted from the visible results cards")
 
+            cache_lookup_started_at = time.perf_counter()
             existing_listing_rows: dict[str, dict[str, Any]] = {}
             supabase_url = os.getenv("SUPABASE_URL")
             supabase_key = os.getenv("SUPABASE_KEY")
@@ -1887,14 +2291,21 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
                     logging.info("Loaded %s existing listing row(s) for detail reuse check", len(existing_listing_rows))
                 except Exception as error:
                     logging.warning("Skipping detail reuse cache lookup: %s", error)
+            timings["detail_cache_lookup_seconds"] = elapsed_seconds(cache_lookup_started_at)
 
+            detail_started_at = time.perf_counter()
             merged_listings, failed_detail_urls, detail_attempted, detail_succeeded = await enrich_listings(
                 context,
                 summaries,
                 detail_limit=min(limits.detail_limit, len(summaries)),
                 detail_concurrency=limits.detail_concurrency,
+                detail_pause_min=limits.detail_pause_min,
+                detail_pause_max=limits.detail_pause_max,
+                block_detail_assets=limits.block_detail_assets,
                 existing_listing_rows=existing_listing_rows,
             )
+            timings["detail_enrichment_seconds"] = elapsed_seconds(detail_started_at)
+            timings["total_seconds"] = elapsed_seconds(scrape_started_at)
 
             logging.info(
                 "Detail scraping summary: %s attempted, %s succeeded, %s failed",
@@ -1904,6 +2315,7 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
             )
             if failed_detail_urls:
                 logging.warning("Failed detail URLs: %s", failed_detail_urls)
+            logging.info("Scrape timings: %s", timings)
 
             await context.close()
             return {
@@ -1914,6 +2326,7 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
                 "detail_attempted": detail_attempted,
                 "detail_succeeded": detail_succeeded,
                 "failed_detail_urls": failed_detail_urls,
+                "timings": timings,
             }
 
         except Exception as error:
@@ -1957,7 +2370,8 @@ async def async_main() -> int:
             save_to_supabase(supabase_config, payload)
         logging.info("Scrape completed successfully")
         print(f"\nSaved JSON: {output_path}")
-        print_listings(scrape_result["listings"])
+        if not args.no_print_listings:
+            print_listings(scrape_result["listings"])
         return 0
     except ValueError as error:
         logging.error("%s", error)

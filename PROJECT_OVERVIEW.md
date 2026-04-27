@@ -658,6 +658,10 @@ Completed:
 - light lifecycle tracking per saved search
 - repeat-run detail reuse
 - safe speed pass
+- Webshare API proxy selection
+- improved pagination stabilization
+- optional detail asset blocking
+- Realtor.ca security-challenge detection during detail enrichment
 
 Validated:
 
@@ -666,10 +670,12 @@ Validated:
 - detail enrichment with `detail_concurrency=2`
 - photo extraction
 - repeat-run reuse of recently enriched listing details
+- `60/60` detail enrichment with `detail_concurrency=12` and asset blocking before security challenges appeared
 
 Remaining follow-up:
 
 - explicitly prove the inactive-listing transition with a controlled rerun in the same saved-search context
+- retest scraper stability after cooldown, starting with lower detail concurrency because recent `14`/`16` concurrency tests triggered Realtor.ca security-check pages
 
 ### Phase 2: Local Website And Listing Review
 
@@ -822,12 +828,17 @@ The next coding session should therefore start by answering:
 3. how should the UI communicate that vacancy is stats-backed when available and otherwise manually entered
 4. what exact source controls are needed before adding IRR projection assumptions
 5. do we need one more scraper reliability pass before relying more heavily on the active set
+6. what is the new stable detail concurrency after the Realtor.ca security-check event: retest `4`, `6`, `8`, then only retest `12` if lower settings are clean
 
 ## Current Risks And Constraints
 
 - headed Playwright runs can still be flaky on the local machine, especially when Chrome for Testing crashes or an old Flask server keeps serving stale code
 - AI-assisted buy-box results are only as good as the prompt and listing description quality
 - Realtor.ca can still show transient or stale result counts before the page fully settles
+- Realtor.ca can serve an additional security-check page during detail enrichment; this was observed after aggressive detail-concurrency tests. The scraper now detects the challenge and stops queued detail work, but the next session should treat this as an active reliability issue.
+- Webshare API proxy selection works and randomly picks one valid proxy per run, but proxy rotation alone did not prevent challenges after aggressive concurrency tests.
+
+See [docs/scraper_status.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/scraper_status.md:1) for the current scraper/proxy benchmark handoff.
 - pagination controls on Realtor.ca are inconsistent enough that continued defensive handling is warranted
 - market data for smaller Canadian regions may be sparse, which is why selective AI assistance still makes sense for some assumptions such as rent, but not every field should become AI-driven
 - BC-wide utilities and insurance rule-based defaults are intentionally coarse and are not market-specific

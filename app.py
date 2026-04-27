@@ -57,6 +57,8 @@ DEFAULT_MAX_PAGES = 3
 DEFAULT_MAX_LISTINGS = 25
 DEFAULT_DETAIL_LIMIT = DEFAULT_MAX_LISTINGS
 DEFAULT_DETAIL_CONCURRENCY = 2
+DEFAULT_DETAIL_PAUSE_MIN = 0.25
+DEFAULT_DETAIL_PAUSE_MAX = 0.6
 PROPERTY_TYPE_OPTIONS = ["house", "apartment", "condo"]
 SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
@@ -3214,6 +3216,10 @@ def build_scrape_args(form_data) -> list[str]:
     append_value("--max-listings", form_data.get("max_listings") or str(DEFAULT_MAX_LISTINGS))
     append_value("--detail-limit", form_data.get("detail_limit") or str(DEFAULT_DETAIL_LIMIT))
     append_value("--detail-concurrency", form_data.get("detail_concurrency") or str(DEFAULT_DETAIL_CONCURRENCY))
+    append_value("--detail-pause-min", form_data.get("detail_pause_min") or str(DEFAULT_DETAIL_PAUSE_MIN))
+    append_value("--detail-pause-max", form_data.get("detail_pause_max") or str(DEFAULT_DETAIL_PAUSE_MAX))
+    if form_data.get("block_detail_assets"):
+        args.append("--block-detail-assets")
     return args
 
 
@@ -3238,6 +3244,8 @@ def build_scrape_args_from_saved_search(saved_search: dict[str, Any]) -> list[st
     append_value("--max-listings", DEFAULT_MAX_LISTINGS)
     append_value("--detail-limit", DEFAULT_DETAIL_LIMIT)
     append_value("--detail-concurrency", DEFAULT_DETAIL_CONCURRENCY)
+    append_value("--detail-pause-min", DEFAULT_DETAIL_PAUSE_MIN)
+    append_value("--detail-pause-max", DEFAULT_DETAIL_PAUSE_MAX)
     return args
 
 
