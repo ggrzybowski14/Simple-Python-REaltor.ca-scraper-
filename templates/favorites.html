@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Favorites | Real Estate Analyzer{% endblock %}
+
+{% block content %}
+<section class="hero-card compact-hero">
+  <div>
+    <p class="eyebrow">Favorite Listings</p>
+    <h1>Saved favorites by location</h1>
+    <p class="hero-copy">
+      Listings you heart from saved searches, listing analysis, or detail pages are collected here.
+    </p>
+  </div>
+</section>
+
+{% if grouped_favorites %}
+{% for group in grouped_favorites %}
+<section class="panel lower-grid">
+  <div class="panel-header">
+    <p class="eyebrow">{{ group.location }}</p>
+    <h2>{{ group.listings|length }} favorite listing{{ '' if group.listings|length == 1 else 's' }}</h2>
+  </div>
+  <div class="card-list favorites-grid">
+    {% for listing in group.listings %}
+    <article class="info-card listing-card">
+      {% if listing.primary_photo_url %}
+      <a class="listing-thumb-link" href="{{ url_for('listing_detail', saved_search_id=group.saved_search.id, listing_id=listing.listing_id) }}">
+        <img class="listing-thumb" src="{{ listing.primary_photo_url }}" alt="Primary photo for {{ listing.address }}">
+      </a>
+      {% endif %}
+      <div class="card-topline">
+        <h3>
+          <a href="{{ url_for('listing_detail', saved_search_id=group.saved_search.id, listing_id=listing.listing_id) }}">
+            {{ listing.address }}
+          </a>
+        </h3>
+        <form method="post" action="{{ url_for('toggle_listing_favorite', saved_search_id=group.saved_search.id, listing_id=listing.listing_id) }}" class="favorite-form">
+          <input type="hidden" name="favorite" value="0">
+          <input type="hidden" name="redirect_target" value="favorites">
+          <button type="submit" class="favorite-button favorite-active" aria-label="Remove from favorites">
+            &hearts;
+          </button>
+        </form>
+      </div>
+      <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
+      <p class="meta-line">
+        {{ group.saved_search.name }} |
+        Beds: {{ listing.bedrooms or 'N/A' }} |
+        Baths: {{ listing.bathrooms or 'N/A' }} |
+        {{ listing.property_type or listing.building_type or 'Unknown type' }}
+      </p>
+      <div class="card-actions">
+        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=group.saved_search.id, listing_id=listing.listing_id) }}">View scraped details</a>
+        <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=group.saved_search.id) }}">Open search</a>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<section class="panel">
+  <p class="empty-state">No favorite listings yet.</p>
+</section>
+{% endif %}
+{% endblock %}

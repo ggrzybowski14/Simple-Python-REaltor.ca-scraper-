@@ -41,15 +41,19 @@ Current prototype state:
 - Broader BC CMHC rental coverage working: CMHC market rental workbooks now feed apartment, townhouse, and condo-apartment rental cards for CMHC-covered BC markets like Victoria, Vancouver, Kelowna, Nanaimo, Kamloops, and Chilliwack
 - Detached-house rental gap documented: CMHC detached and semi-detached BC coverage is still too incomplete or suppressed to present as a reliable single-family baseline yet
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
+- AI rent research upgraded: listing rent suggestions, market rental gap estimates, and market appreciation estimates now use OpenAI Responses API with web search and visible source/research-trail fields
 - Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
 - Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
+- Listing-level underwriting overrides working: listing detail pages can edit the major underwriting assumptions that feed that listing's analysis
+- Favorites working: listings can be hearted from detail/analyzer views and reviewed from a dedicated Favorites page grouped by saved-search location
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
 - Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
+- Buy-box AI screens expanded: the listing-analysis workspace supports two separate AI prompt screens plus optional base filters
 - Listing-analysis results UX simplified: the table now emphasizes `Final Score`, `Buy Box Outcome`, and `Underwriting Score`, uses header info chips for scoring logic, hides low-value scraped taxes/HOA/warnings columns, and color-codes core investment metrics
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, improved pagination collection, and corrected `BC` versus `British Columbia` location matching for Nanaimo-style searches
-- Current active step: continue validating CMHC detached-house coverage gaps and decide how market-page AI estimates should feed back into saved-search underwriting defaults
-- Current UI priority: tighten source/context language so users can distinguish official data, closest property-type baselines, proxies, and AI estimates at a glance
+- Current active step: build the planned AI chat surfaces for listing detail, market context, and listing analyzer pages
+- Current performance priority: persist buy-box AI analysis results and cache repeated market reference reads so ordinary navigation does not feel like an AI job
 
 ## What It Does Today
 
@@ -80,8 +84,11 @@ Current prototype state:
 - Supports an explicit listing-analysis setup state before results are generated, so changing assumptions does not automatically rewrite the table until the user reruns analysis
 - Preserves unsaved buy-box draft edits while users work through source-mode controls before running analysis
 - Supports listing-specific rent overrides that feed the underwriting table and listing-detail page
+- Supports listing-detail edits for major underwriting assumptions such as rent, down payment, interest rate, amortization, operating expenses, and source metadata
+- Supports favoriting listings and reviewing favorites grouped by saved-search location
 - Supports CMHC market-reference matching for market rent and vacancy baselines
 - Labels CMHC closest property-type baselines, such as townhouse rows used for house searches, separately from exact market matches
+- Supports web-search-backed AI rent/appreciation estimates with source URLs, direct-comparison counts, fallback-comparison counts, and fallback strategy notes
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
 - Supports separate smart maintenance and smart CapEx per-listing override passes for active listings
 - Includes a local pytest suite for the deterministic underwriting and app logic
@@ -93,6 +100,8 @@ Current prototype state:
 - Supports a bulk StatCan market-metrics import workflow so matched BC markets can auto-fill `population`, `population growth`, `unemployment`, and `median household income`
 
 For the current scraper/proxy/performance handoff, see [docs/scraper_status.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/scraper_status.md:1).
+For the staged AI chatbot plan, see [docs/AI_CHATBOT_ROADMAP.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/AI_CHATBOT_ROADMAP.md:1).
+For current page-load and AI latency notes, see [docs/PERFORMANCE_NOTES.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/PERFORMANCE_NOTES.md:1).
 
 ## What It Is Not Yet
 
@@ -202,6 +211,7 @@ Current config surface:
 - `OPENAI_API_KEY` for AI buy-box analysis and AI rent suggestions
 - `OPENAI_BUY_BOX_MODEL` optional override for buy-box AI analysis
 - `OPENAI_UNDERWRITING_MODEL` optional override for rent suggestion analysis
+- `OPENAI_RESEARCH_MODEL` optional override for web-search-backed rent, appreciation, and future chat research
 - `WEBSHARE_API_KEY` optional Webshare API key for automatic proxy-list selection
 - `WEBSHARE_PROXY_MODE` optional Webshare proxy mode, either `direct` or `backbone`; defaults to `direct`
 - `WEBSHARE_PROXY_COUNTRY_CODES` optional comma-separated Webshare country filter, for example `CA,US`
@@ -213,7 +223,7 @@ Current config surface:
 Important notes:
 
 - Supabase is required for the persistent saved-search, scrape-history, and listing-analysis workflow.
-- OpenAI configuration is optional. Without it, the core scraper, Supabase flow, and non-AI underwriting still work, but AI buy-box and AI rent features are unavailable.
+- OpenAI configuration is optional. Without it, the core scraper, Supabase flow, and non-AI underwriting still work, but AI buy-box, AI rent, AI appreciation, and future AI chat features are unavailable.
 - Scraper proxy configuration is optional. When `WEBSHARE_API_KEY` is set, the scraper fetches the current Webshare proxy list and randomly selects a valid proxy. If the API lookup fails or returns no valid proxies, it falls back to the manual `SCRAPER_PROXY_*` fields. Playwright logs only the proxy host/port.
 - The latest speed tests triggered Realtor.ca security-check pages after aggressive detail concurrency. Treat `--detail-concurrency 12` as a historical best, not a currently safe default, until lower-concurrency retesting is clean.
 

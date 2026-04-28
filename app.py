@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import uuid
@@ -35,6 +36,7 @@ from investment import (
     estimate_smart_reserve_percentages,
     format_currency,
     format_percent,
+    get_listing_override_metadata_keys,
     merge_investment_defaults,
     parse_form_number,
 )
@@ -53,18 +55,67 @@ from scraper import load_dotenv
 
 APP_ROOT = Path(__file__).parent
 LOCAL_JOB_LOG_DIR = APP_ROOT / "artifacts" / "web_jobs"
-DEFAULT_MAX_PAGES = 3
-DEFAULT_MAX_LISTINGS = 25
+DEFAULT_MAX_PAGES = 10
+DEFAULT_MAX_LISTINGS = 100
 DEFAULT_DETAIL_LIMIT = DEFAULT_MAX_LISTINGS
-DEFAULT_DETAIL_CONCURRENCY = 2
-DEFAULT_DETAIL_PAUSE_MIN = 0.25
-DEFAULT_DETAIL_PAUSE_MAX = 0.6
+DEFAULT_DETAIL_CONCURRENCY = 6
+DEFAULT_DETAIL_PAUSE_MIN = 0.2
+DEFAULT_DETAIL_PAUSE_MAX = 0.5
+DEFAULT_BLOCK_DETAIL_ASSETS = True
 PROPERTY_TYPE_OPTIONS = ["house", "apartment", "condo"]
 SCRAPE_JOBS: dict[str, dict[str, Any]] = {}
 SCRAPE_JOBS_LOCK = Lock()
 AI_BUY_BOX_CACHE: dict[str, dict[str, str]] = {}
 AI_RENT_PREVIEWS: dict[int, dict[str, Any]] = {}
 LISTING_ANALYSIS_RUNS: dict[int, dict[str, Any]] = {}
+DEFAULT_BUY_BOX_AI_SCREENS = [
+    {"key": "screen_1", "name": "AI Prompt 1", "goal": "", "enabled": False},
+    {"key": "screen_2", "name": "AI Prompt 2", "goal": "", "enabled": False},
+]
+
+LISTING_UNDERWRITING_OVERRIDE_KEYS = [
+    "market_rent_monthly",
+    "down_payment_percent",
+    "interest_rate_percent",
+    "amortization_years",
+    "closing_cost_percent",
+    "vacancy_percent",
+    "maintenance_percent_of_rent",
+    "capex_percent_of_rent",
+    "management_percent_of_rent",
+    "insurance_monthly",
+    "utilities_monthly",
+    "other_monthly",
+]
+
+
+def build_listing_underwriting_override_updates(form_data: Any) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    for key in LISTING_UNDERWRITING_OVERRIDE_KEYS:
+        value = parse_form_number(form_data.get(key))
+        source_key, confidence_key, help_text_key = get_listing_override_metadata_keys(key)
+        if value is None:
+            updates[key] = None
+            updates[source_key] = None
+            updates[confidence_key] = None
+            updates[help_text_key] = None
+            continue
+        updates[key] = value
+        updates[source_key] = "listing_override"
+        updates[confidence_key] = "medium"
+        updates[help_text_key] = "Saved listing-specific underwriting override."
+    return updates
+
+
+def annotate_listing_favorites(
+    listings: list[dict[str, Any]],
+    overrides_by_listing_id: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    for listing in listings:
+        listing_id = normalize_listing_id(listing.get("listing_id"))
+        overrides = overrides_by_listing_id.get(listing_id or -1, {})
+        listing["is_favorite"] = bool(overrides.get("favorite"))
+    return listings
 
 MARKET_METRIC_DEFINITIONS = {
     "population": {"label": "Population", "format": "integer"},
@@ -74,7 +125,7 @@ MARKET_METRIC_DEFINITIONS = {
 }
 
 MARKET_RENTAL_CARD_TYPES = ["apartment", "townhouse", "condo_apartment", "single_family"]
-MARKET_RENTAL_BEDROOM_OPTIONS = [1, 2, 3]
+MARKET_RENTAL_BEDROOM_OPTIONS = [1, 2, 3, 4, 5]
 
 
 @dataclass
@@ -101,10 +152,20 @@ def parse_market_bedroom_filter(value: Any, *, default: int | None = 2) -> int |
     cleaned = str(value).strip().lower()
     if cleaned in {"all", "average", "avg"}:
         return None
+    if cleaned in {"5+", "5 plus", "5plus", "5_plus"}:
+        return 5
     parsed = parse_optional_int(cleaned)
     if parsed in MARKET_RENTAL_BEDROOM_OPTIONS:
         return parsed
     return default
+
+
+def format_bedroom_option_label(bedroom_count: int | None) -> str:
+    if bedroom_count is None:
+        return "Avg"
+    if bedroom_count >= 5:
+        return "5+"
+    return str(bedroom_count)
 
 
 def build_market_rental_review_links(
@@ -295,6 +356,12 @@ def get_saved_buy_box_settings(saved_search: dict[str, Any]) -> dict[str, Any]:
 def has_saved_buy_box_settings(saved_buy_box: dict[str, Any]) -> bool:
     if not saved_buy_box:
         return False
+    saved_ai_screens = saved_buy_box.get("ai_screens")
+    has_ai_screen = any(
+        bool((screen.get("goal") or "").strip())
+        for screen in saved_ai_screens
+        if isinstance(screen, dict)
+    ) if isinstance(saved_ai_screens, list) else False
     return any(
         [
             saved_buy_box.get("applied"),
@@ -303,30 +370,77 @@ def has_saved_buy_box_settings(saved_buy_box: dict[str, Any]) -> bool:
             bool((saved_buy_box.get("property_type") or "").strip()),
             bool((saved_buy_box.get("required_keywords_raw") or "").strip()),
             bool((saved_buy_box.get("ai_goal_raw") or "").strip()),
+            has_ai_screen,
         ]
     )
+
+
+def normalize_ai_screen(raw_screen: dict[str, Any], index: int) -> dict[str, Any]:
+    fallback = DEFAULT_BUY_BOX_AI_SCREENS[index]
+    goal = (raw_screen.get("goal") or "").strip()
+    return {
+        "key": fallback["key"],
+        "name": fallback["name"],
+        "goal": goal,
+        "enabled": bool(raw_screen.get("enabled")) and bool(goal),
+    }
+
+
+def get_saved_ai_screens(saved_buy_box: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_screens = saved_buy_box.get("ai_screens")
+    if isinstance(raw_screens, list):
+        normalized = [
+            normalize_ai_screen(raw_screen if isinstance(raw_screen, dict) else {}, index)
+            for index, raw_screen in enumerate(raw_screens[:2])
+        ]
+        while len(normalized) < 2:
+            normalized.append(dict(DEFAULT_BUY_BOX_AI_SCREENS[len(normalized)]))
+        return normalized
+    legacy_goal = (saved_buy_box.get("ai_goal_raw") or "").strip()
+    screens = [dict(screen) for screen in DEFAULT_BUY_BOX_AI_SCREENS]
+    if legacy_goal:
+        screens[0]["goal"] = legacy_goal
+        screens[0]["enabled"] = True
+    return screens
+
+
+def build_ai_screens_from_args(args, saved_buy_box: dict[str, Any], query_applied: bool) -> list[dict[str, Any]]:
+    if not query_applied:
+        return get_saved_ai_screens(saved_buy_box)
+    screens: list[dict[str, Any]] = []
+    for index, fallback in enumerate(DEFAULT_BUY_BOX_AI_SCREENS, start=1):
+        goal = (args.get(f"buy_box_ai_screen_{index}_goal") or "").strip()
+        screens.append(
+            {
+                "key": fallback["key"],
+                "name": fallback["name"],
+                "goal": goal,
+                "enabled": bool(args.get(f"buy_box_ai_screen_{index}_enabled")) and bool(goal),
+            }
+        )
+    return screens
 
 
 def build_buy_box_criteria(args, saved_search: dict[str, Any]) -> dict[str, Any]:
     saved_buy_box = get_saved_buy_box_settings(saved_search)
     query_applied = bool(args.get("apply_buy_box"))
     persisted_applied = has_saved_buy_box_settings(saved_buy_box)
-    applied = query_applied or persisted_applied
-    return {
+    ai_screens = build_ai_screens_from_args(args, saved_buy_box, query_applied)
+    criteria = {
         "max_price": (
             parse_optional_int(args.get("buy_box_max_price"))
             if query_applied
-            else saved_buy_box.get("max_price", saved_search.get("max_price"))
+            else saved_buy_box.get("max_price")
         ),
         "beds_min": (
             parse_optional_int(args.get("buy_box_beds_min"))
             if query_applied
-            else saved_buy_box.get("beds_min", saved_search.get("beds_min"))
+            else saved_buy_box.get("beds_min")
         ),
         "property_type": (
             (args.get("buy_box_property_type") or "").strip().lower()
             if query_applied
-            else (saved_buy_box.get("property_type") or saved_search.get("property_type") or "")
+            else (saved_buy_box.get("property_type") or "")
         ),
         "required_keywords_raw": (
             (args.get("buy_box_keywords") or "").strip()
@@ -343,13 +457,19 @@ def build_buy_box_criteria(args, saved_search: dict[str, Any]) -> dict[str, Any]
             if query_applied
             else (saved_buy_box.get("ai_goal_raw") or "")
         ),
-        "ai_enabled": bool(
-            (args.get("buy_box_ai_goal") or "").strip()
-            if query_applied
-            else (saved_buy_box.get("ai_goal_raw") or "").strip()
-        ),
-        "applied": applied,
+        "ai_screens": ai_screens,
+        "ai_enabled": any(screen["enabled"] for screen in ai_screens),
+        "applied": persisted_applied if not query_applied else False,
     }
+    criteria["applied"] = bool(
+        criteria["applied"]
+        or criteria.get("max_price") is not None
+        or criteria.get("beds_min") is not None
+        or criteria.get("property_type")
+        or criteria.get("required_keywords")
+        or criteria.get("ai_enabled")
+    )
+    return criteria
 
 
 def analyze_listing_against_buy_box(listing: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any]:
@@ -561,43 +681,87 @@ def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dic
         else:
             structured_unmatched.append(enriched_listing)
 
-    ai_results: dict[int, dict[str, str]] = {}
+    enabled_ai_screens = [
+        screen for screen in criteria.get("ai_screens", [])
+        if isinstance(screen, dict) and screen.get("enabled") and (screen.get("goal") or "").strip()
+    ]
+    ai_results_by_screen: dict[str, dict[int, dict[str, str]]] = {}
     ai_error: str | None = None
-    if criteria.get("applied") and criteria.get("ai_goal_raw"):
-        try:
-            ai_results, ai_error = apply_ai_buy_box(criteria["ai_goal_raw"], structured_matches)
-        except Exception as exc:
-            ai_error = str(exc)
+    if criteria.get("applied"):
+        for screen in enabled_ai_screens:
+            try:
+                screen_results, screen_error = apply_ai_buy_box(screen["goal"], structured_matches)
+                if screen_error:
+                    ai_error = screen_error
+                ai_results_by_screen[screen["key"]] = screen_results
+            except Exception as exc:
+                ai_error = str(exc)
+                ai_results_by_screen[screen["key"]] = {}
 
     matched: list[dict[str, Any]] = []
     maybe: list[dict[str, Any]] = []
     unmatched: list[dict[str, Any]] = list(structured_unmatched)
 
     for listing in structured_matches:
-        if criteria.get("applied") and criteria.get("ai_goal_raw"):
-            ai_result = ai_results.get(listing["listing_id"])
-            if ai_result:
-                listing["ai_buy_box_verdict"] = ai_result["verdict"]
-                listing["ai_buy_box_reason"] = ai_result["reason"]
-                if ai_result["verdict"] == "likely":
-                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: likely - {ai_result['reason']}"]
-                    matched.append(listing)
-                elif ai_result["verdict"] == "maybe":
-                    listing["buy_box_match"] = False
-                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: maybe - {ai_result['reason']}"]
-                    maybe.append(listing)
+        if enabled_ai_screens:
+            screen_results: list[dict[str, str]] = []
+            for screen in enabled_ai_screens:
+                ai_result = ai_results_by_screen.get(screen["key"], {}).get(listing["listing_id"])
+                if ai_result:
+                    normalized_verdict = (ai_result.get("verdict") or "no").strip().lower()
+                    screen_result = {
+                        "key": screen["key"],
+                        "name": screen["name"],
+                        "verdict": normalized_verdict,
+                        "reason": ai_result.get("reason") or "",
+                    }
+                    screen_results.append(screen_result)
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [
+                        f"{screen['name']}: {normalized_verdict} - {screen_result['reason']}"
+                    ]
+                elif ai_error:
+                    screen_results.append(
+                        {
+                            "key": screen["key"],
+                            "name": screen["name"],
+                            "verdict": "maybe",
+                            "reason": f"AI unavailable: {ai_error}",
+                        }
+                    )
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [
+                        f"{screen['name']}: AI unavailable - {ai_error}"
+                    ]
                 else:
-                    listing["buy_box_match"] = False
-                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI: {ai_result['verdict']} - {ai_result['reason']}"]
-                    unmatched.append(listing)
+                    screen_results.append(
+                        {
+                            "key": screen["key"],
+                            "name": screen["name"],
+                            "verdict": "no",
+                            "reason": "AI analysis unavailable",
+                        }
+                    )
+                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [
+                        f"{screen['name']}: AI analysis unavailable"
+                    ]
+            likely_count = sum(1 for result in screen_results if result["verdict"] == "likely")
+            maybe_count = sum(1 for result in screen_results if result["verdict"] == "maybe")
+            listing["ai_screen_results"] = screen_results
+            listing["ai_screen_likely_count"] = likely_count
+            listing["ai_screen_total"] = len(screen_results)
+            if likely_count == len(screen_results):
+                listing["ai_buy_box_verdict"] = "likely"
+                listing["ai_buy_box_reason"] = "All enabled AI screens matched."
+                matched.append(listing)
+            elif likely_count > 0 or maybe_count > 0:
+                listing["buy_box_match"] = False
+                listing["ai_buy_box_verdict"] = "maybe"
+                listing["ai_buy_box_reason"] = f"{likely_count} of {len(screen_results)} enabled AI screens matched."
+                maybe.append(listing)
             else:
-                if ai_error:
-                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + [f"AI unavailable: {ai_error}"]
-                    matched.append(listing)
-                else:
-                    listing["buy_box_match"] = False
-                    listing["buy_box_reasons"] = listing["buy_box_reasons"] + ["AI analysis unavailable"]
-                    unmatched.append(listing)
+                listing["buy_box_match"] = False
+                listing["ai_buy_box_verdict"] = "no"
+                listing["ai_buy_box_reason"] = "No enabled AI screens matched."
+                unmatched.append(listing)
         else:
             matched.append(listing)
 
@@ -623,6 +787,9 @@ def analyze_listing_for_detail(listing: dict[str, Any], criteria: dict[str, Any]
                 "reasons": analyzed_listing.get("buy_box_reasons", []),
                 "ai_verdict": analyzed_listing.get("ai_buy_box_verdict"),
                 "ai_reason": analyzed_listing.get("ai_buy_box_reason"),
+                "ai_screen_results": analyzed_listing.get("ai_screen_results", []),
+                "ai_screen_likely_count": analyzed_listing.get("ai_screen_likely_count"),
+                "ai_screen_total": analyzed_listing.get("ai_screen_total"),
                 "ai_error": analysis.get("ai_error"),
             }
     return None
@@ -636,6 +803,16 @@ def serialize_buy_box_criteria(criteria: dict[str, Any]) -> dict[str, Any]:
         "property_type": criteria.get("property_type") or "",
         "required_keywords_raw": criteria.get("required_keywords_raw") or "",
         "ai_goal_raw": criteria.get("ai_goal_raw") or "",
+        "ai_screens": [
+            {
+                "key": screen.get("key"),
+                "name": screen.get("name") or "",
+                "goal": screen.get("goal") or "",
+                "enabled": bool(screen.get("enabled")),
+            }
+            for screen in criteria.get("ai_screens", [])
+            if isinstance(screen, dict)
+        ],
     }
 
 
@@ -819,6 +996,9 @@ def build_buy_box_result_lookup(
                 "label": label,
                 "reasons": listing.get("buy_box_reasons", []),
                 "ai_verdict": listing.get("ai_buy_box_verdict"),
+                "ai_screen_results": listing.get("ai_screen_results", []),
+                "ai_screen_likely_count": listing.get("ai_screen_likely_count"),
+                "ai_screen_total": listing.get("ai_screen_total"),
             }
     return lookup
 
@@ -892,6 +1072,34 @@ def create_app() -> Flask:
             property_type_options=PROPERTY_TYPE_OPTIONS,
         )
 
+    @app.route("/favorites")
+    def favorites() -> str:
+        config = get_supabase_read_config()
+        saved_searches = fetch_saved_searches(config)
+        grouped_favorites: list[dict[str, Any]] = []
+        for saved_search in saved_searches:
+            active_listings = fetch_active_listings(config, int(saved_search["id"]))
+            listing_ids = [
+                listing_id
+                for listing_id in (normalize_listing_id(listing.get("listing_id")) for listing in active_listings)
+                if listing_id is not None
+            ]
+            overrides_by_listing_id = fetch_listing_investment_overrides(config, int(saved_search["id"]), listing_ids)
+            favorite_listings = [
+                listing for listing in annotate_listing_favorites(active_listings, overrides_by_listing_id)
+                if listing.get("is_favorite")
+            ]
+            if favorite_listings:
+                grouped_favorites.append(
+                    {
+                        "saved_search": saved_search,
+                        "location": saved_search.get("location") or saved_search.get("name") or "Unknown location",
+                        "listings": favorite_listings,
+                    }
+                )
+        grouped_favorites.sort(key=lambda group: str(group["location"]).lower())
+        return render_template("favorites.html", grouped_favorites=grouped_favorites)
+
     @app.route("/markets/<market_key>")
     def market_context_by_key(market_key: str) -> str:
         config = get_supabase_read_config()
@@ -951,6 +1159,13 @@ def create_app() -> Flask:
             clear_saved_buy_box(config, saved_search)
             return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
         active_listings = fetch_active_listings(config, saved_search_id)
+        active_listing_ids = [
+            listing_id
+            for listing_id in (normalize_listing_id(listing.get("listing_id")) for listing in active_listings)
+            if listing_id is not None
+        ]
+        favorite_overrides = fetch_listing_investment_overrides(config, saved_search_id, active_listing_ids)
+        annotate_listing_favorites(active_listings, favorite_overrides)
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
         if flask_request.args.get("apply_buy_box"):
             persist_saved_buy_box(config, saved_search, buy_box)
@@ -1185,6 +1400,7 @@ def create_app() -> Flask:
             saved_search_id,
             [listing["listing_id"] for listing in active_listings],
         )
+        annotate_listing_favorites(active_listings, overrides_by_listing_id)
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
         analysis_state = get_saved_listing_analysis_state(saved_search) or LISTING_ANALYSIS_RUNS.get(saved_search_id)
         analysis_has_run = analysis_state is not None
@@ -1662,7 +1878,30 @@ def create_app() -> Flask:
             "This shared value is the average of the accepted listing-level AI rents."
         )
         persist_saved_search_investment_defaults(config, saved_search_id, updated_defaults)
-        return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, ai_applied=len(valid_suggestions)))
+
+        buy_box = build_buy_box_criteria(flask_request.form, saved_search)
+        persist_saved_buy_box(config, saved_search, buy_box)
+        active_listings = fetch_active_listings(config, saved_search_id)
+        overrides_by_listing_id = fetch_listing_investment_overrides(
+            config,
+            saved_search_id,
+            [listing["listing_id"] for listing in active_listings],
+        )
+        analysis_state = set_listing_analysis_state(
+            saved_search_id,
+            buy_box=buy_box,
+            defaults_snapshot=updated_defaults,
+            overrides_by_listing_id=overrides_by_listing_id,
+        )
+        persist_latest_listing_analysis(config, saved_search, analysis_state)
+        return redirect(
+            url_for(
+                "investment_analyzer",
+                saved_search_id=saved_search_id,
+                ai_applied=len(valid_suggestions),
+                analyzed=1,
+            )
+        )
 
     @app.route("/saved-searches/<int:saved_search_id>/investment-analyzer/listings/<int:listing_id>/rent", methods=["POST"])
     def save_listing_rent_override(saved_search_id: int, listing_id: int) -> Any:
@@ -1693,6 +1932,60 @@ def create_app() -> Flask:
             return redirect(url_for("listing_detail", **redirect_kwargs))
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, rent_saved=listing_id))
 
+    @app.route("/saved-searches/<int:saved_search_id>/listings/<int:listing_id>/underwriting", methods=["POST"])
+    def save_listing_underwriting_overrides(saved_search_id: int, listing_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        listing = fetch_active_listing_detail(config, saved_search_id, listing_id)
+        if listing is None:
+            abort(404)
+        persist_listing_investment_override(
+            config,
+            saved_search_id,
+            listing_id,
+            build_listing_underwriting_override_updates(flask_request.form),
+        )
+        redirect_kwargs: dict[str, Any] = {
+            "saved_search_id": saved_search_id,
+            "listing_id": listing_id,
+            "underwriting_saved": 1,
+        }
+        return_to = (flask_request.form.get("return_to") or "").strip()
+        if return_to:
+            redirect_kwargs["return_to"] = return_to
+        return redirect(url_for("listing_detail", **redirect_kwargs))
+
+    @app.route("/saved-searches/<int:saved_search_id>/listings/<int:listing_id>/favorite", methods=["POST"])
+    def toggle_listing_favorite(saved_search_id: int, listing_id: int) -> Any:
+        config = get_supabase_read_config()
+        saved_search = fetch_saved_search(config, saved_search_id)
+        if saved_search is None:
+            abort(404)
+        listing = fetch_active_listing_detail(config, saved_search_id, listing_id)
+        if listing is None:
+            abort(404)
+        should_favorite = flask_request.form.get("favorite") == "1"
+        persist_listing_investment_override(
+            config,
+            saved_search_id,
+            listing_id,
+            {"favorite": True if should_favorite else None},
+        )
+        redirect_target = (flask_request.form.get("redirect_target") or "").strip()
+        return_to = (flask_request.form.get("return_to") or "").strip()
+        if redirect_target == "listing_detail":
+            redirect_kwargs: dict[str, Any] = {"saved_search_id": saved_search_id, "listing_id": listing_id}
+            if return_to:
+                redirect_kwargs["return_to"] = return_to
+            return redirect(url_for("listing_detail", **redirect_kwargs))
+        if redirect_target == "investment_analyzer":
+            return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id))
+        if redirect_target == "favorites":
+            return redirect(url_for("favorites"))
+        return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
+
     @app.route("/saved-searches/<int:saved_search_id>/listings/<int:listing_id>")
     def listing_detail(saved_search_id: int, listing_id: int) -> str:
         config = get_supabase_read_config()
@@ -1706,6 +1999,7 @@ def create_app() -> Flask:
         listing_buy_box = analyze_listing_for_detail(listing, buy_box)
         investment_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
         listing_overrides = fetch_listing_investment_overrides(config, saved_search_id, [listing_id]).get(listing_id, {})
+        listing["is_favorite"] = bool(listing_overrides.get("favorite"))
         underwriting = calculate_underwriting(listing, investment_defaults, listing_overrides=listing_overrides)
         latest_ai_rent_suggestion = fetch_latest_ai_underwriting_suggestion(
             config,
@@ -1722,6 +2016,7 @@ def create_app() -> Flask:
             investment_defaults=investment_defaults,
             underwriting=underwriting,
             listing_overrides=listing_overrides,
+            editable_assumption_keys=LISTING_UNDERWRITING_OVERRIDE_KEYS,
             latest_ai_rent_suggestion=latest_ai_rent_suggestion,
             return_to=flask_request.args.get("return_to"),
             back_query=flask_request.query_string.decode("utf-8"),
@@ -1744,7 +2039,7 @@ def create_app() -> Flask:
         if saved_search is None:
             abort(404)
 
-        args = build_scrape_args_from_saved_search(saved_search)
+        args = build_scrape_args_from_saved_search(saved_search, flask_request.form)
         job = start_scrape_job(args)
         return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id, started=job["id"]))
 
@@ -1764,6 +2059,14 @@ def create_app() -> Flask:
         if job is None:
             abort(404)
         return render_template("job_detail.html", job=job)
+
+    @app.route("/jobs/<job_id>/cancel", methods=["POST"])
+    def cancel_job(job_id: str) -> Any:
+        job = get_scrape_job(job_id)
+        if job is None:
+            abort(404)
+        cancel_scrape_job(job)
+        return redirect(url_for("job_detail", job_id=job_id))
 
     return app
 
@@ -2745,15 +3048,29 @@ def build_market_housing_summary(
         source_names = ai_estimate.get("source_names", []) if isinstance(ai_estimate, dict) else []
         source_urls = ai_estimate.get("source_urls", []) if isinstance(ai_estimate, dict) else []
         review_links = build_market_rental_review_links(market_profile, property_type, bedroom_count)
+        direct_comps_found = ai_estimate.get("direct_comps_found") if isinstance(ai_estimate, dict) else None
+        fallback_comps_found = ai_estimate.get("fallback_comps_found") if isinstance(ai_estimate, dict) else None
         rental_cards.append(
             {
                 "property_type": property_type,
                 "property_type_label": get_rental_property_type_label(property_type),
                 "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
                 "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
-                "rent_label": f"{displayed_bedroom_count}-bedroom rent" if isinstance(displayed_bedroom_count, int) else "Average rent",
+                "rent_label": (
+                    f"{format_bedroom_option_label(displayed_bedroom_count)}-bedroom rent"
+                    if isinstance(displayed_bedroom_count, int)
+                    else "Average rent"
+                ),
                 "source_url": source_row.get("source_url"),
                 "source_date": source_row.get("source_date"),
+                "market_research_summary": (
+                    ai_estimate.get("market_research_summary")
+                    if value_source == "ai_estimate" and isinstance(ai_estimate, dict)
+                    else None
+                ),
+                "direct_comps_found": direct_comps_found,
+                "fallback_comps_found": fallback_comps_found,
+                "fallback_strategy": ai_estimate.get("fallback_strategy") if isinstance(ai_estimate, dict) else None,
                 "notes": ai_estimate.get("reasoning") if value_source == "ai_estimate" and isinstance(ai_estimate, dict) else None,
                 "value_source": value_source,
                 "confidence": ai_estimate.get("confidence") if value_source == "ai_estimate" and isinstance(ai_estimate, dict) else None,
@@ -2799,7 +3116,11 @@ def build_market_housing_summary(
                 "property_type_label": get_rental_property_type_label(fallback_property_type),
                 "rent_display": format_currency(float(average_rent)) if average_rent is not None else "—",
                 "vacancy_display": format_percent(float(vacancy_rate), digits=1) if vacancy_rate is not None else "—",
-                "rent_label": f"{fallback_bedroom_count}-bedroom rent" if isinstance(fallback_bedroom_count, int) else "Average rent",
+                "rent_label": (
+                    f"{format_bedroom_option_label(fallback_bedroom_count)}-bedroom rent"
+                    if isinstance(fallback_bedroom_count, int)
+                    else "Average rent"
+                ),
                 "source_url": reference.get("source_url"),
                 "source_date": reference.get("source_date"),
                 "notes": market_match.get("notes"),
@@ -3195,6 +3516,53 @@ def merge_listing_media(config: SupabaseReadConfig, listings: list[dict[str, Any
         listing["zoning_type"] = listing.get("zoning_type") or media.get("zoning_type")
 
 
+def form_value(form_data, key: str, default: Any = None) -> Any:
+    if form_data is None:
+        return default
+    value = form_data.get(key)
+    if value is None or str(value).strip() == "":
+        return default
+    return value
+
+
+def form_flag_enabled(form_data, key: str, default: bool = False) -> bool:
+    if form_data is None:
+        return default
+    if key not in form_data:
+        return False
+    value = str(form_data.get(key) or "").strip().lower()
+    return value not in {"", "0", "false", "off", "no"}
+
+
+def parse_price_form_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip().lower().replace(",", "")
+    if not cleaned:
+        return None
+    multiplier = 1
+    if "million" in cleaned:
+        multiplier = 1_000_000
+        cleaned = cleaned.replace("million", "")
+    elif cleaned.endswith("m"):
+        multiplier = 1_000_000
+        cleaned = cleaned[:-1]
+    elif cleaned.endswith("k"):
+        multiplier = 1_000
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.replace("$", "").strip()
+    try:
+        parsed_amount = float(cleaned)
+    except ValueError:
+        return str(value).strip()
+    if multiplier == 1 and "." in cleaned and 0 < parsed_amount < 1000:
+        multiplier = 1_000_000
+    amount = parsed_amount * multiplier
+    if amount <= 0:
+        return None
+    return str(int(round(amount)))
+
+
 def build_scrape_args(form_data) -> list[str]:
     args = [str(resolve_scraper_python()), "scraper.py"]
 
@@ -3210,20 +3578,20 @@ def build_scrape_args(form_data) -> list[str]:
     if beds_min is not None and beds_min > 0:
         append_value("--beds-min", str(beds_min))
     append_value("--property-type", form_data.get("property_type"))
-    append_value("--min-price", form_data.get("min_price"))
-    append_value("--max-price", form_data.get("max_price"))
-    append_value("--max-pages", form_data.get("max_pages") or str(DEFAULT_MAX_PAGES))
-    append_value("--max-listings", form_data.get("max_listings") or str(DEFAULT_MAX_LISTINGS))
-    append_value("--detail-limit", form_data.get("detail_limit") or str(DEFAULT_DETAIL_LIMIT))
-    append_value("--detail-concurrency", form_data.get("detail_concurrency") or str(DEFAULT_DETAIL_CONCURRENCY))
-    append_value("--detail-pause-min", form_data.get("detail_pause_min") or str(DEFAULT_DETAIL_PAUSE_MIN))
-    append_value("--detail-pause-max", form_data.get("detail_pause_max") or str(DEFAULT_DETAIL_PAUSE_MAX))
-    if form_data.get("block_detail_assets"):
+    append_value("--min-price", parse_price_form_value(form_data.get("min_price")))
+    append_value("--max-price", parse_price_form_value(form_data.get("max_price")))
+    append_value("--max-pages", form_value(form_data, "max_pages", str(DEFAULT_MAX_PAGES)))
+    append_value("--max-listings", form_value(form_data, "max_listings", str(DEFAULT_MAX_LISTINGS)))
+    append_value("--detail-limit", form_value(form_data, "detail_limit", str(DEFAULT_DETAIL_LIMIT)))
+    append_value("--detail-concurrency", form_value(form_data, "detail_concurrency", str(DEFAULT_DETAIL_CONCURRENCY)))
+    append_value("--detail-pause-min", form_value(form_data, "detail_pause_min", str(DEFAULT_DETAIL_PAUSE_MIN)))
+    append_value("--detail-pause-max", form_value(form_data, "detail_pause_max", str(DEFAULT_DETAIL_PAUSE_MAX)))
+    if form_flag_enabled(form_data, "block_detail_assets", DEFAULT_BLOCK_DETAIL_ASSETS):
         args.append("--block-detail-assets")
     return args
 
 
-def build_scrape_args_from_saved_search(saved_search: dict[str, Any]) -> list[str]:
+def build_scrape_args_from_saved_search(saved_search: dict[str, Any], form_data=None) -> list[str]:
     args = [str(resolve_scraper_python()), "scraper.py"]
 
     def append_value(flag: str, value: Any) -> None:
@@ -3240,12 +3608,14 @@ def build_scrape_args_from_saved_search(saved_search: dict[str, Any]) -> list[st
     append_value("--property-type", saved_search.get("property_type"))
     append_value("--min-price", saved_search.get("min_price"))
     append_value("--max-price", saved_search.get("max_price"))
-    append_value("--max-pages", DEFAULT_MAX_PAGES)
-    append_value("--max-listings", DEFAULT_MAX_LISTINGS)
-    append_value("--detail-limit", DEFAULT_DETAIL_LIMIT)
-    append_value("--detail-concurrency", DEFAULT_DETAIL_CONCURRENCY)
-    append_value("--detail-pause-min", DEFAULT_DETAIL_PAUSE_MIN)
-    append_value("--detail-pause-max", DEFAULT_DETAIL_PAUSE_MAX)
+    append_value("--max-pages", form_value(form_data, "max_pages", DEFAULT_MAX_PAGES))
+    append_value("--max-listings", form_value(form_data, "max_listings", DEFAULT_MAX_LISTINGS))
+    append_value("--detail-limit", form_value(form_data, "detail_limit", DEFAULT_DETAIL_LIMIT))
+    append_value("--detail-concurrency", form_value(form_data, "detail_concurrency", DEFAULT_DETAIL_CONCURRENCY))
+    append_value("--detail-pause-min", form_value(form_data, "detail_pause_min", DEFAULT_DETAIL_PAUSE_MIN))
+    append_value("--detail-pause-max", form_value(form_data, "detail_pause_max", DEFAULT_DETAIL_PAUSE_MAX))
+    if form_flag_enabled(form_data, "block_detail_assets", DEFAULT_BLOCK_DETAIL_ASSETS):
+        args.append("--block-detail-assets")
     return args
 
 
@@ -3282,6 +3652,7 @@ def start_scrape_job(args: list[str]) -> dict[str, Any]:
         stderr=subprocess.STDOUT,
         text=True,
         env=env,
+        start_new_session=True,
     )
     log_handle.close()
 
@@ -3303,8 +3674,28 @@ def start_scrape_job(args: list[str]) -> dict[str, Any]:
 
 def watch_scrape_job(job: dict[str, Any], process: subprocess.Popen[str]) -> None:
     return_code = process.wait()
-    status = "succeeded" if return_code == 0 else "failed"
+    current_status = read_job_status(job).get("status")
+    if current_status == "cancelled":
+        status = "cancelled"
+    else:
+        status = "succeeded" if return_code == 0 else "failed"
     write_job_status(job, status=status, return_code=return_code)
+
+
+def cancel_scrape_job(job: dict[str, Any]) -> None:
+    if job.get("status") not in {"running", "unknown"}:
+        return
+    pid = int(job["pid"])
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    except PermissionError:
+        os.kill(pid, signal.SIGTERM)
+    write_job_status(job, status="cancelled", return_code=None)
 
 
 def list_scrape_jobs() -> list[dict[str, Any]]:

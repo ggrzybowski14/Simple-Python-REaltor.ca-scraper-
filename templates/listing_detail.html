@@ -18,6 +18,19 @@
       Full scraped detail for an active listing within <strong>{{ saved_search.name }}</strong>.
     </p>
     <p class="hero-meta-line">Last seen in scrape: {{ listing.last_seen_at }}</p>
+    <form method="post" action="{{ url_for('toggle_listing_favorite', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}" class="favorite-form detail-favorite-form">
+      <input type="hidden" name="favorite" value="{{ '0' if listing.is_favorite else '1' }}">
+      <input type="hidden" name="redirect_target" value="listing_detail">
+      {% if return_to %}
+      <input type="hidden" name="return_to" value="{{ return_to }}">
+      {% endif %}
+      <button type="submit" class="favorite-button favorite-button-large {% if listing.is_favorite %}favorite-active{% endif %}" aria-label="{{ 'Remove from favorites' if listing.is_favorite else 'Add to favorites' }}">
+        &hearts; {{ 'Favorited' if listing.is_favorite else 'Favorite' }}
+      </button>
+    </form>
+    {% if listing.url %}
+    <a class="button-secondary button-link detail-primary-link" href="{{ listing.url }}" target="_blank" rel="noopener noreferrer">Open on Realtor.ca</a>
+    {% endif %}
   </div>
   <div class="hero-metrics">
     <div class="metric-card">
@@ -91,6 +104,12 @@
       <div class="fact-row"><span>Zoning</span><strong>{{ listing.zoning_type or 'N/A' }}</strong></div>
       <div class="fact-row"><span>Last seen in scrape</span><strong>{{ listing.last_seen_at }}</strong></div>
       <div class="fact-row"><span>Source key</span><strong>{{ listing.source_listing_key }}</strong></div>
+      {% if listing.url %}
+      <div class="fact-row fact-row-stacked">
+        <span>Realtor URL</span>
+        <strong><a class="external-link inline-link" href="{{ listing.url }}" target="_blank" rel="noopener noreferrer">{{ listing.url }}</a></strong>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -105,9 +124,11 @@
     {% if back_query %}
     <p class="meta-line detail-query-hint">This detail page preserves your current saved-search buy-box state when you go back.</p>
     {% endif %}
+    {% if listing.url %}
     <div class="detail-actions">
-      <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noreferrer">Open listing on Realtor.ca</a>
+      <a class="external-link" href="{{ listing.url }}" target="_blank" rel="noopener noreferrer">Open listing on Realtor.ca</a>
     </div>
+    {% endif %}
   </div>
 </section>
 
@@ -167,22 +188,27 @@
       <p class="eyebrow">Assumptions Used</p>
       <h2>Sources and defaults</h2>
     </div>
-    <form method="post" action="{{ url_for('save_listing_rent_override', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}" class="detail-override-form">
-      <input type="hidden" name="redirect_target" value="listing_detail">
+    <form method="post" action="{{ url_for('save_listing_underwriting_overrides', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}" class="detail-override-form detail-underwriting-form">
       {% if return_to %}
       <input type="hidden" name="return_to" value="{{ return_to }}">
       {% endif %}
+      {% for key in editable_assumption_keys %}
+      {% set assumption = underwriting.effective_assumptions[key] %}
       <label>
-        <span>Listing-specific monthly rent</span>
+        <span>{{ assumption.label or key.replace('_', ' ')|title }}</span>
         <input
           type="number"
-          name="market_rent_monthly"
+          name="{{ key }}"
           min="0"
-          step="50"
-          value="{{ '' if underwriting.metrics.gross_monthly_rent is none else underwriting.metrics.gross_monthly_rent|int }}"
+          step="{{ assumption.input_step or '0.1' }}"
+          value="{{ '' if assumption.value is none else assumption.value }}"
         >
+        <small>{{ assumption.source|replace('_', ' ')|title }} | {{ assumption.confidence|title }} confidence</small>
       </label>
-      <button type="submit" class="button-secondary">Save rent override</button>
+      {% endfor %}
+      <div class="detail-form-actions">
+        <button type="submit" class="button-secondary">Save listing underwriting</button>
+      </div>
     </form>
     <div class="facts-grid">
       {% for key, assumption in underwriting.effective_assumptions.items() %}

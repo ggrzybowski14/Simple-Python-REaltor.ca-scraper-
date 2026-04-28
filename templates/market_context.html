@@ -52,10 +52,10 @@
       <button
         type="submit"
         name="beds"
-        value="{{ option }}"
+        value="{{ '5+' if option >= 5 else option }}"
         class="mini-button {% if selected_bedroom_count == option %}toggle-active{% endif %}"
       >
-        {{ option }}
+        {{ '5+' if option >= 5 else option }}
       </button>
       {% endfor %}
       <button
@@ -90,6 +90,15 @@
       {% if rental_card.value_source == 'ai_estimate' or rental_card.missing_value %}
       <details class="rental-card-details">
         <summary>Estimate details</summary>
+        {% if rental_card.market_research_summary %}
+        <p class="meta-line">{{ rental_card.market_research_summary }}</p>
+        {% endif %}
+        {% if rental_card.direct_comps_found is not none %}
+        <p class="meta-line">Direct comps: {{ rental_card.direct_comps_found }}{% if rental_card.fallback_comps_found is not none %} · Fallback comps: {{ rental_card.fallback_comps_found }}{% endif %}</p>
+        {% endif %}
+        {% if rental_card.fallback_strategy %}
+        <p class="meta-line">Fallback strategy: {{ rental_card.fallback_strategy }}</p>
+        {% endif %}
         {% if rental_card.notes %}
         <p class="meta-line">{{ rental_card.notes }}</p>
         {% endif %}
@@ -116,7 +125,7 @@
       {% if rental_card.missing_value or rental_card.value_source == 'ai_estimate' %}
       <form method="post" action="{{ url_for('generate_market_rental_ai_estimate', market_key=market_profile.market_key) }}" class="inline-form">
         <input type="hidden" name="property_type" value="{{ rental_card.property_type }}">
-        <input type="hidden" name="beds" value="{{ 'all' if selected_bedroom_count is none else selected_bedroom_count }}">
+        <input type="hidden" name="beds" value="{{ 'all' if selected_bedroom_count is none else '5+' if selected_bedroom_count >= 5 else selected_bedroom_count }}">
         <button type="submit" class="button-secondary">{{ 'Re-estimate with AI' if rental_card.value_source == 'ai_estimate' else 'Estimate with AI' }}</button>
       </form>
       {% endif %}

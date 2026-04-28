@@ -184,6 +184,8 @@ code {
   display: grid;
   gap: 0.45rem;
   align-content: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .market-metric-card strong {
@@ -195,6 +197,8 @@ code {
   border-top: 1px solid rgba(124, 100, 72, 0.18);
   margin-top: 0.35rem;
   padding-top: 0.6rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rental-card-details summary {
@@ -210,6 +214,12 @@ code {
 .compact-actions {
   gap: 0.45rem 0.8rem;
   margin-top: 0.45rem;
+  min-width: 0;
+}
+
+.compact-actions a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .appreciation-layout-grid {
@@ -359,10 +369,46 @@ code {
   grid-column: span 6;
 }
 
+.optional-buy-box {
+  margin-bottom: 1rem;
+}
+
+.ai-screen-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.ai-screen-card {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.ai-screen-card label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.compact-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.compact-checkbox input {
+  width: auto;
+}
+
 .scrape-form label,
 .advanced-grid label {
   display: grid;
   gap: 0.45rem;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 input,
@@ -391,10 +437,10 @@ textarea {
 }
 
 .advanced-box {
-  border: 1px dashed var(--line);
-  border-radius: 18px;
-  padding: 0.9rem 1rem 1rem;
-  background: var(--surface-strong);
+  border: 0;
+  border-radius: 0;
+  padding: 0.2rem 0 0;
+  background: transparent;
 }
 
 .advanced-box summary {
@@ -825,6 +871,11 @@ textarea {
   text-decoration: underline;
 }
 
+.inline-link {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+
 .internal-link {
   display: inline-block;
   margin-top: 0.9rem;
@@ -1103,13 +1154,84 @@ textarea {
 .group-divider {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   padding-top: 0.25rem;
   border-top: 1px solid rgba(124, 100, 72, 0.24);
 }
 
+.group-divider-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+}
+
+.ai-screen-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.ai-screen-chip {
+  max-width: 100%;
+}
+
 .listing-cell {
   min-width: 320px;
+}
+
+.listing-actions-inline,
+.listing-table-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.listing-actions-inline {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.favorite-form {
+  margin: 0;
+}
+
+.favorite-button {
+  width: 2rem;
+  height: 2rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(124, 100, 72, 0.24);
+  background: var(--surface);
+  color: var(--muted);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.favorite-button:hover,
+.favorite-active {
+  border-color: rgba(138, 37, 37, 0.28);
+  background: rgba(138, 37, 37, 0.1);
+  color: #8a2525;
+}
+
+.favorite-button-large {
+  width: auto;
+  min-width: 7.5rem;
+  padding: 0 0.9rem;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.detail-favorite-form {
+  margin-top: 1rem;
+}
+
+.favorites-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .numeric-cell {
@@ -1193,6 +1315,30 @@ textarea {
   min-width: 240px;
 }
 
+.detail-underwriting-form {
+  align-items: stretch;
+}
+
+.detail-underwriting-form label {
+  flex: 1 1 260px;
+  padding: 0.8rem;
+  border: 1px solid rgba(124, 100, 72, 0.16);
+  border-radius: 14px;
+  background: var(--surface-strong);
+}
+
+.detail-underwriting-form small {
+  color: var(--muted);
+}
+
+.detail-form-actions {
+  flex: 1 1 100%;
+}
+
+.detail-primary-link {
+  margin-top: 1rem;
+}
+
 .verdict-promising {
   background: rgba(47, 107, 79, 0.12);
   color: var(--green);
@@ -1246,6 +1392,7 @@ textarea {
   .content-grid,
   .compact-hero,
   .buy-box-grid,
+  .ai-screen-grid,
   .analysis-buy-box-form {
     grid-template-columns: 1fr;
   }

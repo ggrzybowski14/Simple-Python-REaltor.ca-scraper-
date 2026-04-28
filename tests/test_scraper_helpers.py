@@ -8,9 +8,11 @@ import scraper as scraper_module
 from scraper import (
     address_matches_requested_location,
     build_proxy_config_from_webshare_proxy,
+    choose_numeric_option,
     collect_scrape_limits,
     describe_proxy_config,
     get_scraper_proxy_config,
+    location_text_matches_requested_location,
     normalize_proxy_server,
     ProxyConfig,
     should_block_detail_request,
@@ -30,6 +32,62 @@ def test_address_matches_requested_location_rejects_nearby_city() -> None:
         "2395 Collins Cres, Nanoose Bay, British Columbia",
         "Nanaimo, BC",
     )
+
+
+def test_location_text_matches_requested_location_accepts_rendered_location() -> None:
+    assert location_text_matches_requested_location("Nanaimo, BC", "Nanaimo")
+
+
+def test_location_text_matches_requested_location_accepts_small_typo() -> None:
+    assert location_text_matches_requested_location("Nanaimo, BC", "Nananimo")
+
+
+def test_location_text_matches_requested_location_rejects_wrong_region() -> None:
+    assert not location_text_matches_requested_location("Canada", "Nanaimo")
+
+
+def test_choose_numeric_option_uses_next_higher_for_max_price() -> None:
+    selected = choose_numeric_option(
+        [
+            {"value": "2400000", "label": "2,400,000"},
+            {"value": "2500000", "label": "2,500,000"},
+            {"value": "3000000", "label": "3,000,000"},
+        ],
+        2494000,
+        mode="max",
+    )
+
+    assert selected is not None
+    assert selected["value"] == "2500000"
+
+
+def test_choose_numeric_option_uses_highest_realtor_option_when_max_price_is_above_available_options() -> None:
+    selected = choose_numeric_option(
+        [
+            {"value": "10000000", "label": "10,000,000"},
+            {"value": "15000000", "label": "15,000,000"},
+        ],
+        25000000,
+        mode="max",
+    )
+
+    assert selected is not None
+    assert selected["value"] == "15000000"
+
+
+def test_choose_numeric_option_uses_next_lower_for_min_price() -> None:
+    selected = choose_numeric_option(
+        [
+            {"value": "900000", "label": "900,000"},
+            {"value": "950000", "label": "950,000"},
+            {"value": "1000000", "label": "1,000,000"},
+        ],
+        925000,
+        mode="min",
+    )
+
+    assert selected is not None
+    assert selected["value"] == "900000"
 
 
 def test_normalize_proxy_server_adds_http_scheme() -> None:

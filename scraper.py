@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import json
 import logging
 import os
@@ -428,6 +429,27 @@ def location_search_parts(value: str | None) -> tuple[str, str | None]:
     return city, province
 
 
+def location_text_matches_requested_location(value: str | None, requested_location: str) -> bool:
+    normalized_value = normalize_location_fragment(value)
+    requested_city, requested_province = location_search_parts(requested_location)
+    if not normalized_value or not requested_city:
+        return False
+    if requested_city in normalized_value and location_province_matches(normalized_value, requested_province):
+        return True
+    value_parts = [part for part in normalized_value.split() if part]
+    requested_parts = [part for part in requested_city.split() if part]
+    if not value_parts or not requested_parts:
+        return False
+    requested_compact = "".join(requested_parts)
+    value_candidates = ["".join(value_parts[index : index + len(requested_parts)]) for index in range(len(value_parts))]
+    if len(requested_compact) >= 5 and any(
+        difflib.SequenceMatcher(None, requested_compact, candidate).ratio() >= 0.86
+        for candidate in value_candidates
+    ):
+        return location_province_matches(normalized_value, requested_province)
+    return False
+
+
 def location_province_matches(address: str, province: str | None) -> bool:
     if not province:
         return True
@@ -445,7 +467,10 @@ def address_matches_requested_location(address: str | None, requested_location: 
     city, province = location_search_parts(requested_location)
     if not normalized_address or not city:
         return False
-    return city in normalized_address and location_province_matches(normalized_address, province)
+    return location_text_matches_requested_location(normalized_address, requested_location) and location_province_matches(
+        normalized_address,
+        province,
+    )
 
 
 def prompt_optional_int(label: str, current: int | None = None, *, prompt_enabled: bool = True) -> int | None:
@@ -568,6 +593,44 @@ def format_price_option(value: int) -> str:
 
 def format_beds_option(value: int) -> str:
     return f"{value}+"
+
+
+def parse_price_option_text(value: str | None) -> int | None:
+    if not value:
+        return None
+    digits = "".join(ch for ch in value if ch.isdigit())
+    return int(digits) if digits else None
+
+
+def choose_numeric_option(
+    options: list[dict[str, Any]],
+    requested_value: int,
+    *,
+    mode: str,
+) -> dict[str, Any] | None:
+    numeric_options = [
+        {**option, "number": parsed}
+        for option in options
+        if (parsed := parse_price_option_text(str(option.get("label") or option.get("value") or ""))) is not None
+    ]
+    if not numeric_options:
+        return None
+    exact = next((option for option in numeric_options if option["number"] == requested_value), None)
+    if exact:
+        return exact
+    if mode == "max":
+        higher_or_equal = [option for option in numeric_options if option["number"] >= requested_value]
+        return min(higher_or_equal, key=lambda option: option["number"]) if higher_or_equal else max(
+            numeric_options,
+            key=lambda option: option["number"],
+        )
+    if mode == "min":
+        lower_or_equal = [option for option in numeric_options if option["number"] <= requested_value]
+        return max(lower_or_equal, key=lambda option: option["number"]) if lower_or_equal else min(
+            numeric_options,
+            key=lambda option: option["number"],
+        )
+    raise ValueError("mode must be 'min' or 'max'")
 
 
 async def wait_for_listings(page: Page) -> None:
@@ -772,6 +835,31 @@ async def set_select_value(page: Page, selector: str, *, value: str | None = Non
     await locator.evaluate("el => el.dispatchEvent(new Event('change', { bubbles: true }))")
 
 
+async def set_numeric_select_value(page: Page, selector: str, requested_value: int, *, mode: str) -> int | None:
+    locator = page.locator(selector)
+    options = await locator.evaluate(
+        """
+        select => Array.from(select.options).map(option => ({
+            value: option.value,
+            label: option.textContent || option.label || option.value,
+        }))
+        """
+    )
+    selected = choose_numeric_option(options, requested_value, mode=mode)
+    if selected is None:
+        raise RuntimeError(f"No usable numeric options found for {selector}")
+    selected_number = int(selected["number"])
+    if selected_number != requested_value:
+        logging.info(
+            "Adjusted %s price filter from %s to nearest available Realtor.ca option %s",
+            mode,
+            requested_value,
+            selected_number,
+        )
+    await set_select_value(page, selector, value=str(selected["value"]))
+    return selected_number
+
+
 async def apply_location(page: Page, location: str) -> None:
     logging.info("Applying location filter: %s", location)
     search_box = page.locator("input[placeholder='City, Neighbourhood, Address or MLS® number']").first
@@ -863,11 +951,17 @@ async def apply_search_criteria(page: Page, criteria: SearchCriteria) -> None:
 
     if criteria.min_price is not None:
         logging.info("Applying minimum price filter: %s", criteria.min_price)
-        await apply_top_select_filter(page, "#ddlMinPriceTop", label=format_price_option(criteria.min_price))
+        previous_url = page.url
+        await set_numeric_select_value(page, "#ddlMinPriceTop", criteria.min_price, mode="min")
+        await page.wait_for_timeout(TOP_FILTER_WAIT_MS)
+        await wait_for_results_refresh(page, previous_url)
 
     if criteria.max_price is not None:
         logging.info("Applying maximum price filter: %s", criteria.max_price)
-        await apply_top_select_filter(page, "#ddlMaxPriceTop", label=format_price_option(criteria.max_price))
+        previous_url = page.url
+        await set_numeric_select_value(page, "#ddlMaxPriceTop", criteria.max_price, mode="max")
+        await page.wait_for_timeout(TOP_FILTER_WAIT_MS)
+        await wait_for_results_refresh(page, previous_url)
 
     if criteria.beds_min is not None and criteria.beds_min > 0:
         logging.info("Applying minimum beds filter: %s+", criteria.beds_min)
@@ -2116,6 +2210,44 @@ async def collect_listing_summaries_across_pages(
     return collected
 
 
+async def validate_location_before_detail_scrape(
+    page: Page,
+    criteria: SearchCriteria,
+    summaries: list[dict[str, Any]],
+) -> None:
+    rendered_location = await extract_rendered_location(page)
+    if location_text_matches_requested_location(rendered_location, criteria.location):
+        logging.info(
+            "Location guard passed using rendered Realtor.ca location: requested=%s | rendered=%s",
+            criteria.location,
+            rendered_location,
+        )
+        return
+
+    checked = summaries[: min(len(summaries), 12)]
+    matching = [
+        listing
+        for listing in checked
+        if address_matches_requested_location(listing.get("address"), criteria.location)
+    ]
+    required_matches = max(1, min(3, len(checked))) if checked else 1
+    if len(matching) >= required_matches:
+        logging.info(
+            "Location guard passed using visible listing addresses: requested=%s | matches=%s/%s",
+            criteria.location,
+            len(matching),
+            len(checked),
+        )
+        return
+
+    sample_addresses = [listing.get("address") for listing in checked[:5]]
+    raise RuntimeError(
+        "Visible Realtor.ca results do not match requested location before detail scraping; "
+        f"requested={criteria.location!r}, rendered_location={rendered_location!r}, "
+        f"matching_cards={len(matching)}/{len(checked)}, sample_addresses={sample_addresses!r}"
+    )
+
+
 async def enrich_detail_worker(
     context: BrowserContext,
     listing: dict[str, Any],
@@ -2200,6 +2332,12 @@ async def enrich_listings(
             "Security challenge detected for %s detail page(s); skipping automatic retries for this run",
             len(challenge_urls),
         )
+    elif failed_urls and detail_concurrency > 1 and len(failed_urls) >= detail_concurrency:
+        logging.warning(
+            "Detail failures reached %s with concurrency=%s; skipping automatic retry to avoid triggering more challenges",
+            len(failed_urls),
+            detail_concurrency,
+        )
     elif failed_urls and detail_concurrency > 1 and len(failed_urls) >= 3:
         logging.warning(
             "Detail failures reached %s with concurrency=%s; retrying failed detail pages sequentially",
@@ -2273,6 +2411,24 @@ async def scrape_listings(criteria: SearchCriteria, limits: ScrapeLimits) -> dic
                 page_limit=limits.max_pages,
                 total_limit=limits.max_listings,
             )
+            try:
+                await validate_location_before_detail_scrape(page, criteria, summaries)
+            except RuntimeError as location_error:
+                logging.warning("%s", location_error)
+                logging.info("Retrying location filter once before detail scraping: %s", criteria.location)
+                await apply_location(page, criteria.location)
+                stabilization_retry_started_at = time.perf_counter()
+                await wait_for_listings(page)
+                results_count, stabilized_page_indicator = await wait_for_results_stabilization(page)
+                timings["location_retry_stabilization_seconds"] = elapsed_seconds(stabilization_retry_started_at)
+                if stabilized_page_indicator:
+                    logging.info("Settled page indicator after location retry: %s", stabilized_page_indicator)
+                summaries = await collect_listing_summaries_across_pages(
+                    page,
+                    page_limit=limits.max_pages,
+                    total_limit=limits.max_listings,
+                )
+                await validate_location_before_detail_scrape(page, criteria, summaries)
             timings["summary_collection_seconds"] = elapsed_seconds(summary_started_at)
 
             if not summaries:

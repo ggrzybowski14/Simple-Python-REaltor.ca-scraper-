@@ -37,6 +37,78 @@ def test_build_buy_box_criteria_uses_saved_settings_when_query_not_applied() -> 
     assert criteria["property_type"] == "condo"
     assert criteria["required_keywords"] == ["suite", "income"]
     assert criteria["ai_enabled"] is True
+    assert criteria["ai_screens"][0]["goal"] == "secondary suite potential"
+    assert criteria["ai_screens"][0]["enabled"] is True
+
+
+def test_parse_market_bedroom_filter_accepts_larger_bedroom_options() -> None:
+    assert webapp.parse_market_bedroom_filter("4") == 4
+    assert webapp.parse_market_bedroom_filter("5+") == 5
+    assert webapp.format_bedroom_option_label(5) == "5+"
+
+
+def test_build_buy_box_criteria_uses_two_ai_screens_from_form() -> None:
+    saved_search = {"search_snapshot": {}}
+
+    criteria = webapp.build_buy_box_criteria(
+        MultiDict(
+            {
+                "apply_buy_box": "1",
+                "buy_box_ai_screen_1_enabled": "1",
+                "buy_box_ai_screen_1_goal": "Find suite potential",
+                "buy_box_ai_screen_2_enabled": "1",
+                "buy_box_ai_screen_2_goal": "Find subdivision potential",
+            }
+        ),
+        saved_search,
+    )
+
+    assert criteria["applied"] is True
+    assert criteria["ai_enabled"] is True
+    assert criteria["ai_screens"][0]["name"] == "AI Prompt 1"
+    assert criteria["ai_screens"][0]["enabled"] is True
+    assert criteria["ai_screens"][1]["name"] == "AI Prompt 2"
+    assert criteria["ai_screens"][1]["enabled"] is True
+
+
+def test_analyze_active_listings_splits_partial_ai_screen_matches(monkeypatch) -> None:
+    criteria = {
+        "applied": True,
+        "max_price": None,
+        "beds_min": None,
+        "property_type": "",
+        "required_keywords": [],
+        "ai_screens": [
+            {"key": "screen_1", "name": "AI Prompt 1", "goal": "suite", "enabled": True},
+            {"key": "screen_2", "name": "AI Prompt 2", "goal": "subdivide", "enabled": True},
+        ],
+    }
+    listings = [
+        {
+            "listing_id": 1,
+            "price": "$750,000",
+            "bedrooms": 3,
+            "property_type": "single family",
+            "building_type": "House",
+            "listing_description": "Large home with suite and big lot.",
+        }
+    ]
+
+    def fake_apply(goal, active_listings):
+        if goal == "suite":
+            return {1: {"verdict": "likely", "reason": "Mentions suite."}}, None
+        return {1: {"verdict": "no", "reason": "No subdivision language."}}, None
+
+    monkeypatch.setattr(webapp, "apply_ai_buy_box", fake_apply)
+
+    analysis = webapp.analyze_active_listings(listings, criteria)
+
+    assert analysis["matched"] == []
+    assert len(analysis["maybe"]) == 1
+    maybe_listing = analysis["maybe"][0]
+    assert maybe_listing["ai_screen_likely_count"] == 1
+    assert maybe_listing["ai_screen_total"] == 2
+    assert [result["verdict"] for result in maybe_listing["ai_screen_results"]] == ["likely", "no"]
 
 
 def test_analyze_listing_against_buy_box_rejects_non_house_building_types() -> None:
@@ -176,6 +248,82 @@ def test_build_scrape_args_omits_zero_beds_filter() -> None:
     )
 
     assert "--beds-min" not in args
+    assert "--block-detail-assets" in args
+
+
+def test_build_scrape_args_uses_bulk_safe_speed_defaults_when_form_values_are_blank() -> None:
+    args = webapp.build_scrape_args(
+        MultiDict(
+            {
+                "location": "Victoria",
+                "max_pages": "",
+                "max_listings": "",
+                "detail_limit": "",
+                "detail_concurrency": "",
+                "detail_pause_min": "",
+                "detail_pause_max": "",
+                "block_detail_assets": "1",
+            }
+        )
+    )
+
+    assert args[args.index("--detail-concurrency") + 1] == "6"
+    assert args[args.index("--detail-pause-min") + 1] == "0.2"
+    assert args[args.index("--detail-pause-max") + 1] == "0.5"
+    assert "--block-detail-assets" in args
+
+
+def test_build_scrape_args_accepts_human_price_input() -> None:
+    args = webapp.build_scrape_args(
+        MultiDict(
+            {
+                "location": "Nanaimo",
+                "max_price": "2.5m",
+            }
+        )
+    )
+
+    assert args[args.index("--max-price") + 1] == "2500000"
+
+
+def test_build_scrape_args_treats_decimal_price_shorthand_as_millions() -> None:
+    args = webapp.build_scrape_args(
+        MultiDict(
+            {
+                "location": "Nanaimo",
+                "max_price": "2.5",
+            }
+        )
+    )
+
+    assert args[args.index("--max-price") + 1] == "2500000"
+
+
+def test_build_scrape_args_from_saved_search_accepts_editable_limits() -> None:
+    args = webapp.build_scrape_args_from_saved_search(
+        {
+            "location": "Victoria",
+            "beds_min": 2,
+            "property_type": "house",
+            "max_price": 1000000,
+        },
+        MultiDict(
+            {
+                "max_pages": "2",
+                "max_listings": "10",
+                "detail_limit": "10",
+                "detail_concurrency": "12",
+                "detail_pause_min": "0.2",
+                "detail_pause_max": "0.5",
+                "block_detail_assets": "1",
+            }
+        ),
+    )
+
+    assert args[args.index("--max-pages") + 1] == "2"
+    assert args[args.index("--max-listings") + 1] == "10"
+    assert args[args.index("--detail-limit") + 1] == "10"
+    assert args[args.index("--detail-concurrency") + 1] == "12"
     assert "--block-detail-assets" in args
 
 

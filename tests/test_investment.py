@@ -118,6 +118,42 @@ def test_calculate_underwriting_uses_listing_level_rent_override() -> None:
     assert result["metrics"]["gross_monthly_rent"] == 3100
 
 
+def test_calculate_underwriting_uses_listing_level_financing_override() -> None:
+    listing = {
+        "price": "$500,000",
+        "annual_taxes": "$3,600",
+        "hoa_fees": "$0",
+    }
+    defaults = build_defaults(
+        {
+            "market_rent_monthly": {"value": 3000},
+            "interest_rate_percent": {"value": 4.5},
+            "down_payment_percent": {"value": 20.0},
+        }
+    )
+
+    result = calculate_underwriting(
+        listing,
+        defaults,
+        listing_overrides={
+            "interest_rate_percent": 5.25,
+            "interest_rate_percent_source": "listing_override",
+            "interest_rate_percent_confidence": "medium",
+            "interest_rate_percent_help_text": "Saved listing-specific underwriting override.",
+            "down_payment_percent": 25,
+            "down_payment_percent_source": "listing_override",
+        },
+    )
+
+    effective_interest = result["effective_assumptions"]["interest_rate_percent"]
+    effective_down_payment = result["effective_assumptions"]["down_payment_percent"]
+    assert effective_interest["value"] == 5.25
+    assert effective_interest["source"] == "listing_override"
+    assert effective_down_payment["value"] == 25
+    assert result["metrics"]["down_payment_amount"] == 125000
+    assert result["metrics"]["monthly_mortgage"] == pytest.approx(2070.76, abs=0.01)
+
+
 def test_estimate_rule_based_utilities_monthly_uses_bc_property_heuristics() -> None:
     estimate = estimate_rule_based_utilities_monthly(
         {

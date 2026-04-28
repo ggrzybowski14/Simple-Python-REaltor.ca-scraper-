@@ -10,10 +10,43 @@
     <p class="hero-copy">
       Review scraped inventory for this search, then open listing analysis to run the buy box and underwriting together.
     </p>
+    <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="scrape-form saved-search-update-form">
+      <details class="advanced-box">
+        <summary>Scrape limits</summary>
+        <div class="advanced-grid">
+          <label>
+            <span>Max pages</span>
+            <input type="number" name="max_pages" placeholder="Default 10">
+          </label>
+          <label>
+            <span>Max listings</span>
+            <input type="number" name="max_listings" placeholder="Default 100">
+          </label>
+          <label>
+            <span>Detail limit</span>
+            <input type="number" name="detail_limit" placeholder="Default 100">
+          </label>
+          <label>
+            <span>Detail concurrency</span>
+            <input type="number" name="detail_concurrency" placeholder="Default 6">
+          </label>
+          <label>
+            <span>Detail pause min</span>
+            <input type="number" name="detail_pause_min" step="0.05" placeholder="Default 0.2">
+          </label>
+          <label>
+            <span>Detail pause max</span>
+            <input type="number" name="detail_pause_max" step="0.05" placeholder="Default 0.5">
+          </label>
+          <label>
+            <span>Block detail assets</span>
+            <input type="checkbox" name="block_detail_assets" value="1" checked>
+          </label>
+        </div>
+      </details>
+      <button type="submit" class="button-secondary">Update Search</button>
+    </form>
     <div class="card-actions">
-      <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="inline-form">
-        <button type="submit" class="button-secondary">Update Search</button>
-      </form>
       <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">Market Context</a>
       {% if sparse_listing_count %}
       <form method="post" action="{{ url_for('retry_sparse_details', saved_search_id=saved_search.id) }}" class="inline-form">
@@ -73,9 +106,17 @@
               {{ listing.address }}
             </a>
           </h3>
-          {% if listing.is_new_in_run %}
-          <span class="pill accent">New this update</span>
-          {% endif %}
+          <div class="listing-actions-inline">
+            <form method="post" action="{{ url_for('toggle_listing_favorite', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}" class="favorite-form">
+              <input type="hidden" name="favorite" value="{{ '0' if listing.is_favorite else '1' }}">
+              <button type="submit" class="favorite-button {% if listing.is_favorite %}favorite-active{% endif %}" aria-label="{{ 'Remove from favorites' if listing.is_favorite else 'Add to favorites' }}">
+                &hearts;
+              </button>
+            </form>
+            {% if listing.is_new_in_run %}
+            <span class="pill accent">New this update</span>
+            {% endif %}
+          </div>
         </div>
         <p class="price-line">{{ listing.price or 'Price unavailable' }}</p>
         <p class="meta-line">
@@ -110,7 +151,18 @@
         Type: {{ buy_box.property_type|title if buy_box.property_type else "Any" }}
       </p>
       <p class="meta-line">Keywords: {{ buy_box.required_keywords_raw if buy_box.required_keywords_raw else "None" }}</p>
+      {% if buy_box.ai_screens %}
+      <p class="meta-line">
+        AI screens:
+        {% for screen in buy_box.ai_screens if screen.enabled %}
+        {{ screen.name }}{% if not loop.last %}, {% endif %}
+        {% else %}
+        None saved
+        {% endfor %}
+      </p>
+      {% else %}
       <p class="meta-line">AI goal: {{ buy_box.ai_goal_raw if buy_box.ai_goal_raw else "None saved" }}</p>
+      {% endif %}
       {% if buy_box_ai_error %}
       <p class="ai-error">{{ buy_box_ai_error }}</p>
       {% endif %}

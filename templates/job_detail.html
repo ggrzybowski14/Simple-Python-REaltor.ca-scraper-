@@ -19,6 +19,11 @@
       <strong>{{ job.started_at }}</strong>
     </div>
   </div>
+  {% if job.status == 'running' %}
+  <form method="post" action="{{ url_for('cancel_job', job_id=job.id) }}" class="inline-form">
+    <button type="submit" class="button-secondary">Cancel job</button>
+  </form>
+  {% endif %}
 </section>
 
 <section class="content-grid lower-grid">

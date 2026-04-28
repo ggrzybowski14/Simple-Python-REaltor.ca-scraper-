@@ -27,11 +27,13 @@ The codebase now also has the first real underwriting layer:
 - explicit setup-and-run listing-analysis workflow: confirm buy-box criteria and underwriting defaults, then run or rerun analysis
 - combined buy-box plus underwriting final verdicts
 - persisted underwriting defaults at the saved-search level
-- listing-level rent overrides
+- listing-level rent and underwriting assumption overrides
 - persisted latest listing-analysis run snapshot per saved search
 - CMHC-backed market reference data for rent and vacancy baselines
 - explicit source-mode preservation so `Run analysis` does not silently convert active CMHC, AI, rule-based, or off assumptions back to manual
 - buy-box draft preservation while users work through source-mode buttons before committing with `Run analysis`
+- two configurable buy-box AI screens plus optional base filters
+- favorites support for marking listings and reviewing them by saved-search location
 - BC-wide rule-based utilities and insurance defaults
 - listing-level smart maintenance and CapEx override support
 
@@ -48,6 +50,7 @@ The codebase now also has the first real market-context layer:
 - a bulk StatCan import path for the core structured market metrics used by the current market page
 - CMHC rental cards for apartment, townhouse, condo-apartment, and AI-estimated detached-house gaps where official detached-house values are missing
 - market-page bedroom filters that persist through rental AI, appreciation proxy, and appreciation AI actions
+- web-search-backed AI rental and appreciation estimates that expose source URLs, direct-comparison counts, fallback-comparison counts, and fallback strategy notes
 
 This is still an early application, not a polished product, but it is already beyond pure scraping validation.
 
@@ -202,8 +205,10 @@ What is already implemented:
 - combined buy-box plus underwriting verdicts for all active listings
 - sorting within each combined result group by strongest performance first
 - saved-search underwriting defaults
-- listing-level rent overrides
+- listing-level rent and underwriting assumption overrides
 - listing-detail underwriting section
+- clickable Realtor.ca listing URLs on listing-detail pages
+- listing favorites shown throughout the site and collected on a dedicated Favorites page
 - source-aware market rent and vacancy controls
 - same-value source switching for rent and vacancy, so manual and CMHC modes can be selected even when their numeric values match
 - `Run analysis` preserves active CMHC, AI, rule-based, and off source modes unless the user explicitly applies a manual value
@@ -212,8 +217,9 @@ What is already implemented:
 - listing-level smart maintenance and CapEx heuristic overrides
 - CMHC market-reference import and match scaffolding
 - AI rent preview inside the `Market Rent Monthly` card
-- `Use AI` flow that applies listing-level AI rent suggestions across the underwriting table
+- `Apply AI values` flow that applies listing-level AI rent suggestions across the underwriting table and refreshes the saved analysis snapshot
 - listing-detail panel showing accepted AI rent reasoning
+- web-search-backed AI rent/appreciation helpers using the OpenAI Responses API
 - local automated tests for underwriting math, market matching, helper logic, and key routes
 
 ## Market Context Layer
@@ -851,8 +857,14 @@ These are the current decisions a new agent should treat as active unless explic
 - the project remains local-first and single-user
 - the listing analyzer is the active product area; the market analyzer is future work
 - buy-box AI is allowed for fuzzy qualitative interpretation of listing descriptions
-- AI rent suggestions are allowed as a user-triggered aid
+- AI rent suggestions are allowed as a user-triggered aid, and they should prioritize current direct comparable rent evidence before using CMHC or other official rows as fallback context
+- AI appreciation fallback should prioritize target-market research before leaning on HPI proxy rows
 - `Vacancy %` should come from market stats when available and remain manually editable rather than becoming an AI-driven field
 - `CapEx` stays separate from `NOI` in v1
+
+Next-session AI and performance handoffs:
+
+- [docs/AI_CHATBOT_ROADMAP.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/AI_CHATBOT_ROADMAP.md:1) documents the staged listing-detail, market-context, and analyzer chatbot plan.
+- [docs/PERFORMANCE_NOTES.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/PERFORMANCE_NOTES.md:1) documents the current page-load and AI latency bottlenecks.
 
 These are known issues, but the project is already usable enough to keep building on.

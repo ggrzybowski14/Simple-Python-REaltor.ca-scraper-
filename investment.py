@@ -123,6 +123,36 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
 }
 
 
+LISTING_OVERRIDE_METADATA_KEYS: dict[str, tuple[str, str, str]] = {
+    "market_rent_monthly": (
+        "market_rent_source",
+        "market_rent_confidence",
+        "market_rent_help_text",
+    ),
+    "maintenance_percent_of_rent": (
+        "maintenance_percent_source",
+        "maintenance_percent_confidence",
+        "maintenance_percent_help_text",
+    ),
+    "capex_percent_of_rent": (
+        "capex_percent_source",
+        "capex_percent_confidence",
+        "capex_percent_help_text",
+    ),
+}
+
+
+def get_listing_override_metadata_keys(field_key: str) -> tuple[str, str, str]:
+    return LISTING_OVERRIDE_METADATA_KEYS.get(
+        field_key,
+        (
+            f"{field_key}_source",
+            f"{field_key}_confidence",
+            f"{field_key}_help_text",
+        ),
+    )
+
+
 def get_default_investment_assumptions() -> dict[str, dict[str, Any]]:
     return deepcopy(DEFAULT_INVESTMENT_ASSUMPTIONS)
 
@@ -410,30 +440,7 @@ def build_effective_assumptions(
     normalized_overrides = listing_overrides if isinstance(listing_overrides, dict) else {}
     annual_taxes = parse_money_amount(listing.get("annual_taxes"))
     hoa_monthly = parse_money_amount(listing.get("hoa_fees"))
-    rent_override = parse_form_number(str(normalized_overrides.get("market_rent_monthly"))) if normalized_overrides.get("market_rent_monthly") is not None else None
-    if rent_override is not None:
-        rent_override_source = str(normalized_overrides.get("market_rent_source") or "listing_override")
-        effective["market_rent_monthly"]["value"] = rent_override
-        effective["market_rent_monthly"]["source"] = rent_override_source
-        effective["market_rent_monthly"]["confidence"] = "medium"
-        effective["market_rent_monthly"]["help_text"] = (
-            "Saved AI listing rent value." if rent_override_source.startswith("ai_") else "Saved listing-specific rent override."
-        )
-    override_fields = [
-        (
-            "maintenance_percent_of_rent",
-            "maintenance_percent_source",
-            "maintenance_percent_confidence",
-            "maintenance_percent_help_text",
-        ),
-        (
-            "capex_percent_of_rent",
-            "capex_percent_source",
-            "capex_percent_confidence",
-            "capex_percent_help_text",
-        ),
-    ]
-    for field_key, source_key, confidence_key, help_text_key in override_fields:
+    for field_key in merged_defaults:
         override_value = (
             parse_form_number(str(normalized_overrides.get(field_key)))
             if normalized_overrides.get(field_key) is not None
@@ -441,12 +448,30 @@ def build_effective_assumptions(
         )
         if override_value is None:
             continue
-        effective[field_key]["value"] = override_value
-        effective[field_key]["source"] = str(normalized_overrides.get(source_key) or "listing_override")
-        effective[field_key]["confidence"] = str(normalized_overrides.get(confidence_key) or "medium")
-        effective[field_key]["help_text"] = str(
-            normalized_overrides.get(help_text_key) or effective[field_key].get("help_text") or ""
+        source_key, confidence_key, help_text_key = get_listing_override_metadata_keys(field_key)
+        override_source = str(
+            normalized_overrides.get(source_key)
+            or normalized_overrides.get(f"{field_key}_source")
+            or "listing_override"
         )
+        effective[field_key]["value"] = override_value
+        effective[field_key]["source"] = override_source
+        effective[field_key]["confidence"] = str(
+            normalized_overrides.get(confidence_key)
+            or normalized_overrides.get(f"{field_key}_confidence")
+            or "medium"
+        )
+        override_help_text = normalized_overrides.get(help_text_key) or normalized_overrides.get(f"{field_key}_help_text")
+        if override_help_text:
+            effective[field_key]["help_text"] = str(override_help_text)
+        elif field_key == "market_rent_monthly":
+            effective[field_key]["help_text"] = (
+                "Saved AI listing rent value."
+                if override_source.startswith("ai_")
+                else "Saved listing-specific rent override."
+            )
+        else:
+            effective[field_key]["help_text"] = "Saved listing-specific underwriting override."
     if annual_taxes is not None:
         effective["property_tax_annual"] = {
             "value": annual_taxes,

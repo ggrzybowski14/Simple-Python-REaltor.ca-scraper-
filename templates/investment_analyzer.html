@@ -361,7 +361,7 @@
       {% if not analysis_has_run %}
       Confirm the setup below, then run analysis to populate the results table.
       {% elif analysis_buy_box.applied %}
-      Rows are grouped by the combined analysis result, then sorted by strongest monthly cash flow within each group.
+      Rows are grouped by final score and buy-box outcome, then sorted by strongest monthly cash flow within each group.
       {% else %}
       No saved buy box is active, so the table is using underwriting results only.
       {% endif %}
@@ -386,43 +386,64 @@
 <section class="panel panel-form lower-grid">
   <div class="panel-header">
     <p class="eyebrow">Buy Box</p>
-    <h2>Screening criteria</h2>
+    <h2>Optional screening criteria</h2>
   </div>
-  <div class="scrape-form analysis-buy-box-form">
-    <label>
-      <span>Max price</span>
-      <input type="number" name="buy_box_max_price" min="0" step="1000" value="{{ buy_box.max_price or '' }}">
-    </label>
-    <label>
-      <span>Minimum beds</span>
-      <input type="number" name="buy_box_beds_min" min="0" value="{{ buy_box.beds_min or '' }}">
-    </label>
-    <label>
-      <span>Property type</span>
-      <select name="buy_box_property_type">
-        <option value="">Any</option>
-        {% for option in property_type_options %}
-        <option value="{{ option }}" {% if buy_box.property_type == option %}selected{% endif %}>{{ option.title() }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>
-      <span>Required keywords in description</span>
-      <textarea name="buy_box_keywords" rows="4" placeholder="suite, mortgage helper, carriage house">{{ buy_box.required_keywords_raw }}</textarea>
-    </label>
-    <label>
-      <span>AI interpretation goal</span>
-      <textarea
-        name="buy_box_ai_goal"
-        rows="4"
-        placeholder="Example: Find listings that likely include a separate suite, in-law suite, or strong suite potential for rental income. Ignore references to an ensuite bathroom."
-      >{{ buy_box.ai_goal_raw }}</textarea>
-    </label>
-    <div class="card-actions">
-      {% if buy_box.applied %}
-      <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear buy box</a>
-      {% endif %}
+  <details class="advanced-box optional-buy-box" {% if buy_box.max_price or buy_box.beds_min or buy_box.property_type or buy_box.required_keywords_raw %}open{% endif %}>
+    <summary>Base filters</summary>
+    <div class="scrape-form analysis-buy-box-form">
+      <label>
+        <span>Max price</span>
+        <input type="number" name="buy_box_max_price" min="0" step="1000" value="{{ buy_box.max_price or '' }}">
+      </label>
+      <label>
+        <span>Minimum beds</span>
+        <input type="number" name="buy_box_beds_min" min="0" value="{{ buy_box.beds_min or '' }}">
+      </label>
+      <label>
+        <span>Property type</span>
+        <select name="buy_box_property_type">
+          <option value="">Any</option>
+          {% for option in property_type_options %}
+          <option value="{{ option }}" {% if buy_box.property_type == option %}selected{% endif %}>{{ option.title() }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Required keywords in description</span>
+        <textarea name="buy_box_keywords" rows="4" placeholder="suite, mortgage helper, carriage house">{{ buy_box.required_keywords_raw }}</textarea>
+      </label>
     </div>
+  </details>
+
+  <div class="ai-screen-grid">
+    {% for screen in buy_box.ai_screens %}
+    {% set screen_index = loop.index %}
+    <section class="source-mode-card ai-screen-card {% if screen.enabled %}source-mode-active{% endif %}">
+      <div class="source-mode-header">
+        <div>
+          <p class="eyebrow">AI Screen {{ screen_index }}</p>
+          <h3>AI Prompt {{ screen_index }}</h3>
+        </div>
+        <label class="checkbox-row compact-checkbox">
+          <input type="checkbox" name="buy_box_ai_screen_{{ screen_index }}_enabled" value="1" {% if screen.enabled %}checked{% endif %}>
+          <span>Enabled</span>
+        </label>
+      </div>
+      <label>
+        <span>AI prompt</span>
+        <textarea
+          name="buy_box_ai_screen_{{ screen_index }}_goal"
+          rows="5"
+          placeholder="{% if screen_index == 1 %}Find listings that likely include, or have credible potential for, additional rental suite income. Ignore ensuite bathrooms.{% else %}Find listings with credible subdivision, lot split, rezoning, large-lot, or redevelopment potential.{% endif %}"
+        >{{ screen.goal }}</textarea>
+      </label>
+    </section>
+    {% endfor %}
+  </div>
+  <div class="card-actions">
+    {% if buy_box.applied %}
+    <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear buy box</a>
+    {% endif %}
   </div>
 </section>
 
@@ -554,8 +575,8 @@
             {% endif %}
           </div>
           <div class="source-mode-body">
-            <p class="meta-line">Run AI to generate listing-level rent values, then apply them across the underwriting table.</p>
-            <p class="meta-line">Reasoning and confidence are shown on listing detail after acceptance.</p>
+              <p class="meta-line">Run AI to preview listing-level rent values, then apply them and refresh the underwriting table.</p>
+              <p class="meta-line">Reasoning and confidence are shown here and on listing detail after acceptance.</p>
             <div class="toggle-row">
               <button
                 type="submit"
@@ -570,7 +591,7 @@
                 formaction="{{ url_for('accept_all_ai_rent_suggestions', saved_search_id=saved_search.id) }}"
                 class="mini-button {% if 'ai' in rent_field.source %}toggle-active{% endif %}"
               >
-                Use AI values
+                Apply AI values
               </button>
               {% endif %}
             </div>
@@ -587,6 +608,15 @@
               <p class="ai-error">{{ ai_rent_preview.error }}</p>
               {% else %}
               <p class="meta-line">Model: {{ ai_rent_preview.model }}</p>
+              {% if ai_rent_preview.parsed_response.market_research_summary %}
+              <p class="meta-line">{{ ai_rent_preview.parsed_response.market_research_summary }}</p>
+              {% endif %}
+              {% if ai_rent_preview.parsed_response.direct_comps_found is not none %}
+              <p class="meta-line">Direct comps: {{ ai_rent_preview.parsed_response.direct_comps_found }}{% if ai_rent_preview.parsed_response.fallback_comps_found is not none %} · Fallback comps: {{ ai_rent_preview.parsed_response.fallback_comps_found }}{% endif %}</p>
+              {% endif %}
+              {% if ai_rent_preview.parsed_response.fallback_strategy %}
+              <p class="meta-line">Fallback strategy: {{ ai_rent_preview.parsed_response.fallback_strategy }}</p>
+              {% endif %}
               <p class="meta-line">{{ ai_rent_preview.parsed_response.suggestions|length }} listing suggestions ready to apply.</p>
               {% endif %}
             </div>
@@ -648,20 +678,40 @@
       <tbody>
         {% set current_group = namespace(label='') %}
         {% for row in underwriting_rows %}
+        {% set buy_box_label = (row.buy_box.label if row.buy_box else 'All Listings') %}
+        {% if analysis_buy_box.applied %}
+        {% set group_label = row.combined_verdict.label ~ ' | Buy box: ' ~ buy_box_label %}
+        {% else %}
         {% set group_label = row.combined_verdict.label %}
+        {% endif %}
         {% if current_group.label != group_label %}
         {% set current_group.label = group_label %}
         <tr class="group-divider-row">
           <td colspan="10">
             <div class="group-divider">
-              <strong>{{ group_label }}</strong>
+              <strong>{{ row.combined_verdict.label }}</strong>
+              {% if analysis_buy_box.applied %}
+              <span class="group-divider-meta">
+                Buy box:
+                <span class="pill {% if buy_box_label == 'Likely' %}status-succeeded{% elif buy_box_label == 'Maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}">{{ buy_box_label }}</span>
+              </span>
+              {% endif %}
             </div>
           </td>
         </tr>
         {% endif %}
         <tr>
           <td class="listing-cell">
-            <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=row.listing.listing_id, return_to='investment_analyzer') }}">{{ row.listing.address }}</a>
+            <div class="listing-table-title">
+              <form method="post" action="{{ url_for('toggle_listing_favorite', saved_search_id=saved_search.id, listing_id=row.listing.listing_id) }}" class="favorite-form">
+                <input type="hidden" name="favorite" value="{{ '0' if row.listing.is_favorite else '1' }}">
+                <input type="hidden" name="redirect_target" value="investment_analyzer">
+                <button type="submit" class="favorite-button {% if row.listing.is_favorite %}favorite-active{% endif %}" aria-label="{{ 'Remove from favorites' if row.listing.is_favorite else 'Add to favorites' }}">
+                  &hearts;
+                </button>
+              </form>
+              <a href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=row.listing.listing_id, return_to='investment_analyzer') }}">{{ row.listing.address }}</a>
+            </div>
             <div class="table-subline">
               {{ row.listing.bedrooms or 'N/A' }} bd | {{ row.listing.bathrooms or 'N/A' }} ba | {{ row.listing.property_type or row.listing.building_type or 'Unknown type' }}
             </div>
@@ -677,6 +727,21 @@
           <td>
             {% if row.buy_box %}
             <span class="pill {% if row.buy_box.label == 'Likely' %}status-succeeded{% elif row.buy_box.label == 'Maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}">{{ row.buy_box.label }}</span>
+            {% if row.buy_box.ai_screen_total %}
+            <div class="table-subline">{{ row.buy_box.ai_screen_likely_count or 0 }}/{{ row.buy_box.ai_screen_total }} AI screens likely</div>
+            {% endif %}
+            {% if row.buy_box.ai_screen_results %}
+            <div class="ai-screen-chip-row">
+              {% for result in row.buy_box.ai_screen_results %}
+              <span
+                class="pill ai-screen-chip {% if result.verdict == 'likely' %}status-succeeded{% elif result.verdict == 'maybe' %}ai-pill ai-maybe{% else %}status-failed{% endif %}"
+                title="{{ result.reason }}"
+              >
+                {{ result.name }}: {{ 'Likely' if result.verdict == 'likely' else 'Maybe' if result.verdict == 'maybe' else 'No' }}
+              </span>
+              {% endfor %}
+            </div>
+            {% endif %}
             {% else %}
             <span class="table-subline">No buy box</span>
             {% endif %}
@@ -733,7 +798,10 @@
       "buy_box_beds_min",
       "buy_box_property_type",
       "buy_box_keywords",
-      "buy_box_ai_goal",
+      "buy_box_ai_screen_1_enabled",
+      "buy_box_ai_screen_1_goal",
+      "buy_box_ai_screen_2_enabled",
+      "buy_box_ai_screen_2_goal",
     ];
     const buyBoxFields = buyBoxFieldNames
       .map((name) => document.querySelector(`[name="${name}"]`))
@@ -743,6 +811,9 @@
       const draft = {};
       buyBoxFields.forEach((field) => {
         draft[field.name] = field.value;
+        if (field.type === "checkbox") {
+          draft[field.name] = field.checked;
+        }
       });
       return draft;
     };
@@ -760,7 +831,11 @@
         const draft = JSON.parse(rawDraft);
         buyBoxFields.forEach((field) => {
           if (Object.prototype.hasOwnProperty.call(draft, field.name)) {
-            field.value = draft[field.name];
+            if (field.type === "checkbox") {
+              field.checked = Boolean(draft[field.name]);
+            } else {
+              field.value = draft[field.name];
+            }
           }
         });
       } catch {
