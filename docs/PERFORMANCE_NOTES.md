@@ -47,17 +47,17 @@ Main work on each load:
 - rebuild underwriting rows when analysis has run
 - rebuild buy-box result lookup
 
-Important issue:
+Previous issue:
 
 - `build_buy_box_result_lookup` calls `analyze_active_listings`.
 - If the saved buy box has enabled AI screens and `AI_BUY_BOX_CACHE` is cold, this can call OpenAI while simply loading the underwriting page.
 - The cache is in-process only, so it is lost after a server restart.
 
-Recommended fix:
+Implemented fix:
 
-- Persist buy-box AI screen results in the saved analysis state when the user runs analysis.
-- On normal page navigation, render the persisted buy-box results instead of re-running `analyze_active_listings`.
-- Only re-run buy-box AI when the user explicitly clicks `Run analysis` or changes the buy-box prompts.
+- Buy-box AI screen results are persisted in the saved analysis state when the user runs analysis.
+- Normal page navigation renders persisted buy-box results instead of re-running `analyze_active_listings`.
+- Buy-box AI reruns when the user explicitly clicks `Run analysis` / `Rerun analysis` or changes the buy-box prompts. Legacy analysis snapshots without persisted buy-box results should be rerun once.
 
 ## AI Actions
 
@@ -79,7 +79,6 @@ Recommended UX improvements:
 ## First Performance Fixes To Build
 
 1. Add route timing logs for Supabase calls, OpenAI calls, and render time.
-2. Persist buy-box AI analysis results and stop re-running AI on ordinary underwriting page loads.
-3. Add a TTL cache for market reference rows and market metrics.
-4. Convert market rental/appreciation AI actions to background jobs.
-5. Lazy-load listing images/media where possible on analyzer/detail pages.
+2. Add a TTL cache for market reference rows and market metrics.
+3. Convert market rental/appreciation AI actions to background jobs.
+4. Lazy-load listing images/media where possible on analyzer/detail pages.

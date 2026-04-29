@@ -10,8 +10,9 @@ Current AI implementation details:
   - Function: `call_openai_buy_box_assessment`
   - Input: listing ID, address, and listing description.
   - Output: `likely` / `maybe` / `no` plus a short reason.
-  - Still uses `https://api.openai.com/v1/chat/completions`.
-  - No live web research. This is intentional for now because it screens listing descriptions, not market/regulatory facts.
+  - Description-only prompts still use `https://api.openai.com/v1/chat/completions`.
+  - Prompts that need market/regulatory/neighborhood context now use one batch `web_search`-enabled Responses API call for the saved-search/listing batch, then apply that shared researched context across listings.
+  - Buy-box AI intentionally does not do parcel-specific deep research per listing; exact zoning, school catchment, floodplain, safety nuance, and other address-specific due diligence belong in listing-detail chat.
 
 - Listing rent suggestions in `ai_underwriting.py`
   - Function: `call_openai_rent_suggestions`
@@ -282,11 +283,11 @@ Potential storage concepts:
 
 ## V5: Upgrade Remaining Existing AI Estimates
 
-Market rental, market appreciation, and listing rent suggestions have already been migrated to Responses API with web search.
+Market rental, market appreciation, listing rent suggestions, and research-needed buy-box prompts now use Responses API with web search.
 
 Remaining candidate:
 
-- Buy-box AI screens, if we want prompts like suite potential or subdivision potential to research municipal rules rather than only read listing descriptions.
+- Listing-detail chat for property-specific due diligence follow-up after buy-box triage.
 
 Important caveat: rent suggestions for many listings could become expensive/slower with web search. A better path may be:
 

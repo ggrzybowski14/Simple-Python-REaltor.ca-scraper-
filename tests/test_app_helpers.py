@@ -94,7 +94,7 @@ def test_analyze_active_listings_splits_partial_ai_screen_matches(monkeypatch) -
         }
     ]
 
-    def fake_apply(goal, active_listings):
+    def fake_apply(goal, active_listings, **kwargs):
         if goal == "suite":
             return {1: {"verdict": "likely", "reason": "Mentions suite."}}, None
         return {1: {"verdict": "no", "reason": "No subdivision language."}}, None
@@ -173,6 +173,88 @@ def test_build_buy_box_result_lookup_returns_bucket_labels() -> None:
     assert lookup[2]["label"] == "Unmatched"
 
 
+def test_buy_box_goal_needs_research_for_neighborhood_and_rules_questions() -> None:
+    assert webapp.buy_box_goal_needs_research("Is this in a safe nice neighborhood?")
+    assert webapp.buy_box_goal_needs_research("Does zoning allow subdivision?")
+    assert not webapp.buy_box_goal_needs_research("Mentions a separate entrance suite")
+
+
+def test_apply_ai_buy_box_uses_researched_batch_for_research_prompts(monkeypatch) -> None:
+    webapp.AI_BUY_BOX_CACHE.clear()
+    calls: dict[str, object] = {}
+    listings = [
+        {
+            "listing_id": 1,
+            "address": "123 Example St, Nanaimo, BC",
+            "listing_description": "Large family home.",
+        },
+        {
+            "listing_id": 2,
+            "address": "456 Example Ave, Nanaimo, BC",
+            "listing_description": "Updated home near amenities.",
+        },
+    ]
+    saved_search = {"id": 36, "location": "Nanaimo", "property_type": "house", "beds_min": 4}
+
+    def fake_researched(goal, active_listings, saved_search_arg=None):
+        calls["goal"] = goal
+        calls["listing_count"] = len(active_listings)
+        calls["saved_search"] = saved_search_arg
+        return {
+            1: {"verdict": "maybe", "reason": "Market-level research is mixed."},
+            2: {"verdict": "likely", "reason": "Area context is favorable."},
+        }
+
+    def fail_description_only(goal, active_listings):
+        raise AssertionError("research prompts should use the researched buy-box path")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(webapp, "call_openai_researched_buy_box_assessment", fake_researched)
+    monkeypatch.setattr(webapp, "call_openai_buy_box_assessment", fail_description_only)
+
+    results, error = webapp.apply_ai_buy_box(
+        "Is this in a safe nice neighborhood?",
+        listings,
+        saved_search=saved_search,
+    )
+
+    assert error is None
+    assert calls["listing_count"] == 2
+    assert calls["saved_search"] == saved_search
+    assert results[1]["verdict"] == "maybe"
+    assert results[2]["verdict"] == "likely"
+
+
+def test_apply_ai_buy_box_keeps_description_path_for_listing_description_prompts(monkeypatch) -> None:
+    webapp.AI_BUY_BOX_CACHE.clear()
+    calls: dict[str, object] = {}
+    listings = [
+        {
+            "listing_id": 1,
+            "address": "123 Example St",
+            "listing_description": "Includes a suite with separate entrance.",
+        }
+    ]
+
+    def fail_researched(goal, active_listings, saved_search_arg=None):
+        raise AssertionError("description-only prompts should not use web research")
+
+    def fake_description_only(goal, active_listings):
+        calls["goal"] = goal
+        calls["listing_count"] = len(active_listings)
+        return {1: {"verdict": "likely", "reason": "Mentions suite."}}
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(webapp, "call_openai_researched_buy_box_assessment", fail_researched)
+    monkeypatch.setattr(webapp, "call_openai_buy_box_assessment", fake_description_only)
+
+    results, error = webapp.apply_ai_buy_box("Mentions a separate entrance suite", listings)
+
+    assert error is None
+    assert calls["listing_count"] == 1
+    assert results[1]["reason"] == "Mentions suite."
+
+
 def test_build_combined_analysis_verdict_uses_buy_box_and_underwriting() -> None:
     assert webapp.build_combined_analysis_verdict(
         {"label": "Likely"},
@@ -230,6 +312,26 @@ def test_get_saved_listing_analysis_state_reads_snapshot() -> None:
     assert webapp.get_saved_listing_analysis_state(
         {"search_snapshot": {"latest_listing_analysis": state}}
     ) == state
+
+
+def test_listing_analysis_state_stores_buy_box_results_with_string_keys() -> None:
+    state = webapp.build_listing_analysis_state(
+        7,
+        buy_box={"applied": True},
+        defaults_snapshot={},
+        overrides_by_listing_id={101: {"favorite": True}},
+        buy_box_results_by_listing_id={
+            101: {
+                "bucket": "matched",
+                "label": "Matched",
+                "ai_screen_results": [{"verdict": "likely", "reason": "Fits."}],
+            }
+        },
+    )
+
+    assert state["overrides_by_listing_id"]["101"]["favorite"] is True
+    assert state["buy_box_results_by_listing_id"]["101"]["bucket"] == "matched"
+    assert webapp.normalize_analysis_state_buy_box_results(state)[101]["label"] == "Matched"
 
 
 def test_build_scrape_args_omits_zero_beds_filter() -> None:

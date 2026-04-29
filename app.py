@@ -25,6 +25,7 @@ from ai_underwriting import (
     build_rent_ai_prompt_text,
     call_openai_market_appreciation_gap_estimate,
     call_openai_market_rental_gap_estimate,
+    call_openai_researched_json,
     call_openai_rent_suggestions,
 )
 from crea_hpi import SERIES_KEY_BY_PROPERTY_TYPE, format_signal_label
@@ -72,6 +73,28 @@ DEFAULT_BUY_BOX_AI_SCREENS = [
     {"key": "screen_1", "name": "AI Prompt 1", "goal": "", "enabled": False},
     {"key": "screen_2", "name": "AI Prompt 2", "goal": "", "enabled": False},
 ]
+BUY_BOX_RESEARCH_TERMS = (
+    "allowed",
+    "bylaw",
+    "by-law",
+    "carriage",
+    "crime",
+    "flood",
+    "legal",
+    "neighborhood",
+    "neighbourhood",
+    "nice area",
+    "permit",
+    "safe",
+    "safety",
+    "school",
+    "subdiv",
+    "transit",
+    "walkable",
+    "walkability",
+    "wildfire",
+    "zoning",
+)
 
 LISTING_UNDERWRITING_OVERRIDE_KEYS = [
     "market_rent_monthly",
@@ -532,9 +555,15 @@ def analyze_listing_against_buy_box(listing: dict[str, Any], criteria: dict[str,
     }
 
 
-def build_ai_buy_box_cache_key(goal: str, listing: dict[str, Any]) -> str:
+def buy_box_goal_needs_research(goal: str) -> bool:
+    normalized = goal.strip().lower()
+    return any(term in normalized for term in BUY_BOX_RESEARCH_TERMS)
+
+
+def build_ai_buy_box_cache_key(goal: str, listing: dict[str, Any], *, mode: str = "description") -> str:
     payload = "\n".join(
         [
+            mode,
             goal.strip(),
             str(listing.get("listing_id") or ""),
             listing.get("address") or "",
@@ -542,6 +571,42 @@ def build_ai_buy_box_cache_key(goal: str, listing: dict[str, Any]) -> str:
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_researched_buy_box_payload(
+    goal: str,
+    listings: list[dict[str, Any]],
+    saved_search: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "goal": goal,
+        "saved_search": {
+            "saved_search_id": (saved_search or {}).get("id"),
+            "name": (saved_search or {}).get("name"),
+            "location": (saved_search or {}).get("location"),
+            "property_type": (saved_search or {}).get("property_type"),
+            "beds_min": (saved_search or {}).get("beds_min"),
+            "max_price": (saved_search or {}).get("max_price"),
+        },
+        "listings": [
+            {
+                "listing_id": listing.get("listing_id"),
+                "address": listing.get("address"),
+                "url": listing.get("url"),
+                "price": listing.get("price"),
+                "bedrooms": listing.get("bedrooms"),
+                "bathrooms": listing.get("bathrooms"),
+                "property_type": listing.get("property_type"),
+                "building_type": listing.get("building_type"),
+                "square_feet": listing.get("square_feet"),
+                "land_size": listing.get("land_size"),
+                "built_in": listing.get("built_in"),
+                "zoning_type": listing.get("zoning_type"),
+                "listing_description": listing.get("listing_description") or "",
+            }
+            for listing in listings
+        ],
+    }
 
 
 def call_openai_buy_box_assessment(goal: str, listings: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
@@ -637,18 +702,92 @@ def call_openai_buy_box_assessment(goal: str, listings: list[dict[str, Any]]) ->
     return assessment_by_listing_id
 
 
-def apply_ai_buy_box(goal: str, listings: list[dict[str, Any]]) -> tuple[dict[int, dict[str, str]], str | None]:
+def call_openai_researched_buy_box_assessment(
+    goal: str,
+    listings: list[dict[str, Any]],
+    saved_search: dict[str, Any] | None = None,
+) -> dict[int, dict[str, Any]]:
+    if not listings:
+        return {}
+    schema = {
+        "type": "object",
+        "properties": {
+            "research_summary": {"type": "string"},
+            "source_names": {"type": "array", "items": {"type": "string"}},
+            "source_urls": {"type": "array", "items": {"type": "string"}},
+            "assessments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "listing_id": {"type": "integer"},
+                        "verdict": {"type": "string", "enum": ["likely", "maybe", "no"]},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["listing_id", "verdict", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["research_summary", "source_names", "source_urls", "assessments"],
+        "additionalProperties": False,
+    }
+    ai_result = call_openai_researched_json(
+        system_text=(
+            "You screen Canadian residential real-estate listings against a user's buy-box criterion. "
+            "Use web search to research the saved-search market and criterion once, then apply that shared "
+            "market context across the provided listings. Do not perform parcel-specific due diligence or claim "
+            "exact zoning, crime, school-catchment, floodplain, or permit conclusions for a specific address. "
+            "For property-specific unknowns, use maybe and say what should be verified in listing-detail chat "
+            "or manual due diligence. Return only structured JSON."
+        ),
+        prompt_text=(
+            "Research the market-level context needed for this buy-box screen, then classify each listing as "
+            "likely, maybe, or no. Keep reasons short and cite the shared sources in source_names/source_urls."
+        ),
+        payload=build_researched_buy_box_payload(goal, listings, saved_search),
+        schema_name="researched_buy_box_assessment",
+        schema=schema,
+    )
+    parsed = ai_result["parsed_response"]
+    source_names = parsed.get("source_names", []) if isinstance(parsed, dict) else []
+    source_urls = parsed.get("source_urls", []) if isinstance(parsed, dict) else []
+    assessment_by_listing_id: dict[int, dict[str, Any]] = {}
+    for item in parsed.get("assessments", []) if isinstance(parsed, dict) else []:
+        listing_id = item.get("listing_id")
+        verdict = item.get("verdict")
+        reason = item.get("reason")
+        if isinstance(listing_id, int) and isinstance(verdict, str) and isinstance(reason, str):
+            assessment_by_listing_id[listing_id] = {
+                "verdict": verdict,
+                "reason": reason,
+                "source_names": source_names,
+                "source_urls": source_urls,
+                "research_summary": parsed.get("research_summary", ""),
+                "research_mode": "market_context",
+            }
+    return assessment_by_listing_id
+
+
+def apply_ai_buy_box(
+    goal: str,
+    listings: list[dict[str, Any]],
+    *,
+    saved_search: dict[str, Any] | None = None,
+    allow_research: bool = True,
+) -> tuple[dict[int, dict[str, Any]], str | None]:
     if not goal.strip():
         return {}, None
     if not os.getenv("OPENAI_API_KEY"):
         return {}, "OPENAI_API_KEY is not configured for AI buy-box analysis."
 
+    mode = "research" if allow_research and buy_box_goal_needs_research(goal) else "description"
     cached_results: dict[int, dict[str, str]] = {}
     uncached_listings: list[dict[str, Any]] = []
     uncached_keys: dict[int, str] = {}
 
     for listing in listings:
-        cache_key = build_ai_buy_box_cache_key(goal, listing)
+        cache_key = build_ai_buy_box_cache_key(goal, listing, mode=mode)
         cached = AI_BUY_BOX_CACHE.get(cache_key)
         if cached:
             cached_results[listing["listing_id"]] = cached
@@ -657,7 +796,10 @@ def apply_ai_buy_box(goal: str, listings: list[dict[str, Any]]) -> tuple[dict[in
             uncached_keys[listing["listing_id"]] = cache_key
 
     if uncached_listings:
-        fresh_results = call_openai_buy_box_assessment(goal, uncached_listings)
+        if mode == "research":
+            fresh_results = call_openai_researched_buy_box_assessment(goal, uncached_listings, saved_search)
+        else:
+            fresh_results = call_openai_buy_box_assessment(goal, uncached_listings)
         for listing_id, result in fresh_results.items():
             cache_key = uncached_keys.get(listing_id)
             if cache_key:
@@ -667,7 +809,13 @@ def apply_ai_buy_box(goal: str, listings: list[dict[str, Any]]) -> tuple[dict[in
     return cached_results, None
 
 
-def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dict[str, Any]) -> dict[str, Any]:
+def analyze_active_listings(
+    active_listings: list[dict[str, Any]],
+    criteria: dict[str, Any],
+    *,
+    saved_search: dict[str, Any] | None = None,
+    allow_research: bool = True,
+) -> dict[str, Any]:
     structured_matches: list[dict[str, Any]] = []
     structured_unmatched: list[dict[str, Any]] = []
 
@@ -690,7 +838,12 @@ def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dic
     if criteria.get("applied"):
         for screen in enabled_ai_screens:
             try:
-                screen_results, screen_error = apply_ai_buy_box(screen["goal"], structured_matches)
+                screen_results, screen_error = apply_ai_buy_box(
+                    screen["goal"],
+                    structured_matches,
+                    saved_search=saved_search,
+                    allow_research=allow_research,
+                )
                 if screen_error:
                     ai_error = screen_error
                 ai_results_by_screen[screen["key"]] = screen_results
@@ -714,6 +867,10 @@ def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dic
                         "name": screen["name"],
                         "verdict": normalized_verdict,
                         "reason": ai_result.get("reason") or "",
+                        "source_names": ai_result.get("source_names", []),
+                        "source_urls": ai_result.get("source_urls", []),
+                        "research_summary": ai_result.get("research_summary", ""),
+                        "research_mode": ai_result.get("research_mode", ""),
                     }
                     screen_results.append(screen_result)
                     listing["buy_box_reasons"] = listing["buy_box_reasons"] + [
@@ -776,7 +933,7 @@ def analyze_active_listings(active_listings: list[dict[str, Any]], criteria: dic
 def analyze_listing_for_detail(listing: dict[str, Any], criteria: dict[str, Any]) -> dict[str, Any] | None:
     if not criteria.get("applied"):
         return None
-    analysis = analyze_active_listings([listing], criteria)
+    analysis = analyze_active_listings([listing], criteria, allow_research=False)
     for bucket_name in ("matched", "maybe", "unmatched"):
         bucket = analysis[bucket_name]
         if bucket:
@@ -920,6 +1077,7 @@ def build_listing_analysis_state(
     buy_box: dict[str, Any],
     defaults_snapshot: dict[str, dict[str, Any]],
     overrides_by_listing_id: dict[int, dict[str, Any]],
+    buy_box_results_by_listing_id: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "buy_box": buy_box,
@@ -927,6 +1085,10 @@ def build_listing_analysis_state(
         "overrides_by_listing_id": {
             str(listing_id): overrides
             for listing_id, overrides in overrides_by_listing_id.items()
+        },
+        "buy_box_results_by_listing_id": {
+            str(listing_id): result
+            for listing_id, result in (buy_box_results_by_listing_id or {}).items()
         },
         "ran_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
@@ -938,12 +1100,14 @@ def set_listing_analysis_state(
     buy_box: dict[str, Any],
     defaults_snapshot: dict[str, dict[str, Any]],
     overrides_by_listing_id: dict[int, dict[str, Any]],
+    buy_box_results_by_listing_id: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     state = build_listing_analysis_state(
         saved_search_id,
         buy_box=buy_box,
         defaults_snapshot=defaults_snapshot,
         overrides_by_listing_id=overrides_by_listing_id,
+        buy_box_results_by_listing_id=buy_box_results_by_listing_id,
     )
     LISTING_ANALYSIS_RUNS[saved_search_id] = state
     return state
@@ -966,6 +1130,31 @@ def normalize_analysis_state_overrides(state: dict[str, Any] | None) -> dict[int
     return normalized
 
 
+def normalize_analysis_state_buy_box_results(state: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    raw_results = (state or {}).get("buy_box_results_by_listing_id")
+    if not isinstance(raw_results, dict):
+        return {}
+    normalized: dict[int, dict[str, Any]] = {}
+    for listing_id, result in raw_results.items():
+        normalized_listing_id = normalize_listing_id(listing_id)
+        if normalized_listing_id is None or not isinstance(result, dict):
+            continue
+        normalized[normalized_listing_id] = result
+    return normalized
+
+
+def buy_box_has_enabled_ai(buy_box: dict[str, Any] | None) -> bool:
+    screens = (buy_box or {}).get("ai_screens")
+    if not isinstance(screens, list):
+        return False
+    return any(
+        isinstance(screen, dict)
+        and bool(screen.get("enabled"))
+        and bool((screen.get("goal") or "").strip())
+        for screen in screens
+    )
+
+
 def hydrate_defaults_for_saved_search(
     config: SupabaseReadConfig,
     saved_search: dict[str, Any],
@@ -980,10 +1169,12 @@ def hydrate_defaults_for_saved_search(
 def build_buy_box_result_lookup(
     active_listings: list[dict[str, Any]],
     buy_box: dict[str, Any],
+    *,
+    saved_search: dict[str, Any] | None = None,
 ) -> dict[int, dict[str, Any]]:
     if not buy_box.get("applied"):
         return {}
-    analysis = analyze_active_listings(active_listings, buy_box)
+    analysis = analyze_active_listings(active_listings, buy_box, saved_search=saved_search)
     lookup: dict[int, dict[str, Any]] = {}
     for bucket_name in ("matched", "maybe", "unmatched"):
         label = bucket_name.title()
@@ -1170,7 +1361,6 @@ def create_app() -> Flask:
         if flask_request.args.get("apply_buy_box"):
             persist_saved_buy_box(config, saved_search, buy_box)
             return redirect(url_for("saved_search_detail", saved_search_id=saved_search_id))
-        analysis = analyze_active_listings(active_listings, buy_box)
         scrape_runs = fetch_recent_runs(config, saved_search_id=saved_search_id)
         latest_run = scrape_runs[0] if scrape_runs else None
         return render_template(
@@ -1178,10 +1368,10 @@ def create_app() -> Flask:
             saved_search=saved_search,
             active_listings=active_listings,
             buy_box=buy_box,
-            matched_listings=analysis["matched"],
-            maybe_listings=analysis["maybe"],
-            unmatched_listings=analysis["unmatched"],
-            buy_box_ai_error=analysis["ai_error"],
+            matched_listings=[],
+            maybe_listings=[],
+            unmatched_listings=[],
+            buy_box_ai_error=None,
             scrape_runs=scrape_runs,
             latest_run=latest_run,
             new_listing_count=sum(1 for listing in active_listings if listing.get("is_new_in_run")),
@@ -1407,11 +1597,9 @@ def create_app() -> Flask:
         analysis_buy_box = analysis_state.get("buy_box", {}) if analysis_state else {}
         analysis_defaults = analysis_state.get("defaults_snapshot", {}) if analysis_state else {}
         analysis_overrides_by_listing_id = normalize_analysis_state_overrides(analysis_state)
-        buy_box_results_by_listing_id = (
-            build_buy_box_result_lookup(active_listings, analysis_buy_box)
-            if analysis_has_run
-            else {}
-        )
+        buy_box_results_by_listing_id = normalize_analysis_state_buy_box_results(analysis_state)
+        if analysis_has_run and not buy_box_results_by_listing_id and not buy_box_has_enabled_ai(analysis_buy_box):
+            buy_box_results_by_listing_id = build_buy_box_result_lookup(active_listings, analysis_buy_box, saved_search=saved_search)
         smart_maintenance_active = any(
             isinstance(snapshot, dict) and snapshot.get("maintenance_percent_source") == "smart_listing_estimate"
             for snapshot in overrides_by_listing_id.values()
@@ -1474,11 +1662,17 @@ def create_app() -> Flask:
             saved_search_id,
             [listing["listing_id"] for listing in active_listings],
         )
+        buy_box_results_by_listing_id = build_buy_box_result_lookup(
+            active_listings,
+            buy_box,
+            saved_search=saved_search,
+        )
         analysis_state = set_listing_analysis_state(
             saved_search_id,
             buy_box=buy_box,
             defaults_snapshot=defaults_snapshot,
             overrides_by_listing_id=overrides_by_listing_id,
+            buy_box_results_by_listing_id=buy_box_results_by_listing_id,
         )
         persist_latest_listing_analysis(config, saved_search, analysis_state)
         return redirect(url_for("investment_analyzer", saved_search_id=saved_search_id, analyzed=1))
@@ -1887,11 +2081,17 @@ def create_app() -> Flask:
             saved_search_id,
             [listing["listing_id"] for listing in active_listings],
         )
+        buy_box_results_by_listing_id = build_buy_box_result_lookup(
+            active_listings,
+            buy_box,
+            saved_search=saved_search,
+        )
         analysis_state = set_listing_analysis_state(
             saved_search_id,
             buy_box=buy_box,
             defaults_snapshot=updated_defaults,
             overrides_by_listing_id=overrides_by_listing_id,
+            buy_box_results_by_listing_id=buy_box_results_by_listing_id,
         )
         persist_latest_listing_analysis(config, saved_search, analysis_state)
         return redirect(

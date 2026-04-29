@@ -741,6 +741,14 @@
               </span>
               {% endfor %}
             </div>
+            {% for result in row.buy_box.ai_screen_results if result.source_urls %}
+            <div class="table-subline">
+              Sources:
+              {% for source_url in result.source_urls[:2] %}
+              <a class="internal-link" href="{{ source_url }}" target="_blank" rel="noreferrer">source {{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
+            {% endfor %}
             {% endif %}
             {% else %}
             <span class="table-subline">No buy box</span>

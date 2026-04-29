@@ -505,6 +505,172 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
     assert "123 Example St" in body
 
 
+def test_investment_analyzer_uses_persisted_buy_box_results_on_page_load(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Nanaimo Houses",
+            "location": "Nanaimo",
+            "property_type": "house",
+            "beds_min": 4,
+            "max_price": 2500000,
+            "search_snapshot": {
+                "latest_listing_analysis": {
+                    "ran_at": "2026-04-28T22:27:51Z",
+                    "buy_box": {
+                        "applied": True,
+                        "max_price": 2495000,
+                        "beds_min": 4,
+                        "property_type": "house",
+                        "ai_screens": [
+                            {
+                                "key": "screen_1",
+                                "name": "AI Prompt 1",
+                                "goal": "Is this in a safe nice neighborhood?",
+                                "enabled": True,
+                            }
+                        ],
+                    },
+                    "defaults_snapshot": webapp.merge_investment_defaults(
+                        {"market_rent_monthly": {"value": 3500}}
+                    ),
+                    "overrides_by_listing_id": {},
+                    "buy_box_results_by_listing_id": {
+                        "101": {
+                            "bucket": "maybe",
+                            "label": "Maybe",
+                            "reasons": ["AI Prompt 1: maybe - Needs review."],
+                            "ai_verdict": "maybe",
+                            "ai_screen_results": [
+                                {
+                                    "key": "screen_1",
+                                    "name": "AI Prompt 1",
+                                    "verdict": "maybe",
+                                    "reason": "Needs review.",
+                                    "source_urls": ["https://example.com/source"],
+                                }
+                            ],
+                            "ai_screen_likely_count": 0,
+                            "ai_screen_total": 1,
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_active_listings",
+        lambda config, saved_search_id: [
+            {
+                "listing_id": 101,
+                "address": "123 Example St",
+                "price": "$1,200,000",
+                "bedrooms": 4,
+                "bathrooms": 3,
+                "property_type": "house",
+                "building_type": "House",
+                "annual_taxes": "$5,000",
+                "hoa_fees": "$0",
+                "listing_description": "Large detached house.",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        webapp,
+        "hydrate_defaults_for_saved_search",
+        lambda config, saved_search: (webapp.merge_investment_defaults({"market_rent_monthly": {"value": 3500}}), None),
+    )
+    monkeypatch.setattr(webapp, "fetch_listing_investment_overrides", lambda config, saved_search_id, listing_ids: {})
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("page load should render persisted buy-box results without rebuilding AI analysis")
+
+    monkeypatch.setattr(webapp, "build_buy_box_result_lookup", fail_if_called)
+
+    response = webapp.app.test_client().get("/saved-searches/36/investment-analyzer")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Nanaimo Houses" in body
+    assert "source 1" in body
+
+
+def test_saved_search_detail_does_not_run_buy_box_analysis_on_page_load(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Nanaimo Houses",
+            "location": "Nanaimo",
+            "property_type": "house",
+            "beds_min": 4,
+            "max_price": 2500000,
+            "last_scraped_at": "2026-04-28T15:40:32+00:00",
+            "search_snapshot": {
+                "buy_box": {
+                    "applied": True,
+                    "max_price": 2495000,
+                    "beds_min": 4,
+                    "property_type": "house",
+                    "ai_screens": [
+                        {
+                            "key": "screen_1",
+                            "name": "AI Prompt 1",
+                            "goal": "subdivision potential",
+                            "enabled": True,
+                        }
+                    ],
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_active_listings",
+        lambda config, saved_search_id: [
+            {
+                "listing_id": 101,
+                "address": "123 Example St",
+                "price": "$1,200,000",
+                "bedrooms": 4,
+                "bathrooms": 3,
+                "property_type": "house",
+                "building_type": "House",
+                "listing_description": "Large detached house.",
+                "is_new_in_run": False,
+            }
+        ],
+    )
+    monkeypatch.setattr(webapp, "fetch_listing_investment_overrides", lambda config, saved_search_id, listing_ids: {})
+    monkeypatch.setattr(webapp, "fetch_recent_runs", lambda config, saved_search_id=None: [])
+
+    def fail_if_called(active_listings, criteria):
+        raise AssertionError("saved-search detail should not run buy-box analysis during page load")
+
+    monkeypatch.setattr(webapp, "analyze_active_listings", fail_if_called)
+
+    response = webapp.app.test_client().get("/saved-searches/36")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Nanaimo Houses" in body
+    assert "AI Prompt 1" in body
+
+
 def test_dashboard_renders_local_background_jobs(monkeypatch) -> None:
     monkeypatch.setattr(
         webapp,
