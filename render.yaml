@@ -29,9 +29,9 @@ services:
       - key: WEBSHARE_PROXY_MODE
         value: direct
       - key: WEBSHARE_PROXY_COUNTRY_CODES
-        value: CA,US
+        value: CA, US
       - key: SCRAPER_PROXY_ENABLED
-        value: "false"
+        value: "true"
       - key: SCRAPER_PROXY_SERVER
         sync: false
       - key: SCRAPER_PROXY_USERNAME
