@@ -1,5 +1,47 @@
 services:
   - type: web
+    name: realtor-analyzer-docker
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: DISPLAY
+        value: ":99"
+      - key: SCRAPER_HEADLESS
+        value: "false"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BUY_BOX_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_UNDERWRITING_MODEL
+        value: gpt-5.4-mini
+      - key: OPENAI_RESEARCH_MODEL
+        value: gpt-5.4-mini
+      - key: WEBSHARE_API_KEY
+        sync: false
+      - key: WEBSHARE_PROXY_MODE
+        value: direct
+      - key: WEBSHARE_PROXY_COUNTRY_CODES
+        value: CA, US
+      - key: SCRAPER_PROXY_ENABLED
+        value: "true"
+      - key: SCRAPER_PROXY_SERVER
+        sync: false
+      - key: SCRAPER_PROXY_USERNAME
+        sync: false
+      - key: SCRAPER_PROXY_PASSWORD
+        sync: false
+
+  - type: web
     name: realtor-analyzer
     runtime: python
     plan: standard

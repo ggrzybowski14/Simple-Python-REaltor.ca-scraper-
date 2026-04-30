@@ -1,6 +1,8 @@
 # Render Deployment
 
-This app deploys as a Render Python web service backed by Supabase.
+This app can deploy as either a Render Python web service or a Docker web service backed by Supabase.
+
+The Docker service is preferred for hosted scraping because it runs the scraper's visible Chromium browser inside `Xvfb`, which more closely matches the local headed-browser workflow than headless Chromium.
 
 ## What Goes Where
 
@@ -28,13 +30,34 @@ For this prototype, the app writes directly to Supabase from the server. Keep `S
 2. In Render, choose `New` -> `Blueprint` if using `render.yaml`, or `New` -> `Web Service` if configuring manually.
 3. Connect the GitHub repo.
 4. Use the `standard` plan first because Playwright/Chromium needs more memory than a tiny web app.
-5. Confirm the build command:
+
+### Docker Service
+
+The Blueprint defines `realtor-analyzer-docker` with:
+
+```yaml
+runtime: docker
+dockerfilePath: ./Dockerfile
+```
+
+The Docker entrypoint starts `Xvfb` and then runs Gunicorn. It sets:
+
+```bash
+SCRAPER_HEADLESS=false
+DISPLAY=:99
+```
+
+This lets Playwright launch a headed Chromium browser without a physical display.
+
+### Native Python Service
+
+The earlier native Python service can still run the web app, but headless Chromium does not reliably activate Realtor.ca's location autocomplete. If using the native Python service, confirm the build command:
 
 ```bash
 PLAYWRIGHT_BROWSERS_PATH=0 pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium
 ```
 
-6. Confirm the start command:
+And confirm the start command:
 
 ```bash
 PLAYWRIGHT_BROWSERS_PATH=0 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
