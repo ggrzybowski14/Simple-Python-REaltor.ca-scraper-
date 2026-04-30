@@ -491,6 +491,15 @@ textarea {
   margin-top: 1rem;
 }
 
+.search-card-actions {
+  gap: 0.65rem;
+}
+
+.search-card-actions a,
+.search-card-actions button {
+  min-width: 9rem;
+}
+
 .section-actions {
   margin-bottom: 1rem;
 }
@@ -990,6 +999,22 @@ textarea {
 }
 
 .collapsible-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.activity-panel {
+  align-self: start;
+}
+
+.activity-panel summary {
+  margin-bottom: 0;
+}
+
+.activity-panel[open] summary {
+  margin-bottom: 1rem;
+}
+
+.activity-panel .panel-header {
   display: none;
 }
 

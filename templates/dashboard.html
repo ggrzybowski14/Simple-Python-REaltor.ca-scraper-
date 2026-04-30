@@ -5,7 +5,6 @@
 {% block content %}
 <section class="hero-card">
   <div>
-    <p class="eyebrow">Canadian real estate</p>
     <h1>Welcome to your Canadian real estate deal-finding and underwriting assistant.</h1>
     <p class="hero-copy">
       Find active listings, review markets, and compare investment opportunities with practical underwriting tools.
@@ -126,23 +125,9 @@
           </h3>
           <span class="pill">#{{ search.id }}</span>
         </div>
-        <p class="muted">{{ search.location }}</p>
-        <p class="meta-line">
-          Beds: {{ search.beds_min or 'Any' }} | Type: {{ search.property_type or 'Any' }} |
-          Max: {{ search.max_price or 'Any' }}
-        </p>
-        <p class="meta-line">
-          Last scraped: {{ search.last_scraped_at or 'Never' }}
-          {% if search.latest_run %}
-          <span class="recently-updated-label">Latest run #{{ search.latest_run.id }}</span>
-          {% endif %}
-          {% if search.updated_in_latest_run %}
-          <span class="recently-updated-label">Updated in latest run</span>
-          {% endif %}
-        </p>
-        <div class="card-actions">
-          <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">Open search</a>
-          <a class="internal-link" href="{{ url_for('market_context_by_key', market_key=search.market_profile.market_key) }}">Market context</a>
+        <div class="card-actions search-card-actions">
+          <a class="button-secondary button-link" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">Open search</a>
+          <a class="button-secondary button-link" href="{{ url_for('market_context_by_key', market_key=search.market_profile.market_key) }}">Open market</a>
           <form method="post" action="{{ url_for('update_saved_search', saved_search_id=search.id) }}" class="inline-form">
             <button type="submit" class="button-secondary">Refresh listings</button>
           </form>
@@ -157,47 +142,33 @@
 </section>
 
 <section class="content-grid lower-grid">
-  <details class="panel collapsible-panel">
-    <summary>
-      <span>
-        <span class="eyebrow">Activity</span>
-        <strong>Recent listing searches</strong>
-      </span>
-      <span class="internal-link">Show details</span>
-    </summary>
-    {% if recent_runs %}
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Search</th>
-          <th>Saved Search ID</th>
-          <th>Status</th>
-          <th>Listings found</th>
-          <th>Details loaded</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in recent_runs %}
-        <tr>
-          <td>#{{ run.id }}</td>
-          <td>{{ run.saved_search_id }}</td>
-          <td><span class="pill status-{{ run.status }}">{{ run.status }}</span></td>
-          <td>{{ run.summary_count }}</td>
-          <td>{{ run.detail_succeeded }}/{{ run.detail_attempted }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="panel">
+    <div class="panel-header">
+      <p class="eyebrow">Markets</p>
+      <h2>Markets analyzed</h2>
+    </div>
+    {% if analyzed_markets %}
+    <div class="card-list compact">
+      {% for market in analyzed_markets %}
+      <a class="info-card clickable" href="{{ url_for('market_context_by_key', market_key=market.market_key) }}">
+        <div class="card-topline">
+          <h3>{{ market.market_name }}</h3>
+          <span class="pill">{{ market.province or '—' }}</span>
+        </div>
+        <p class="meta-line">{{ market.saved_searches|length }} linked saved search{{ '' if market.saved_searches|length == 1 else 'es' }}</p>
+      </a>
+      {% endfor %}
+    </div>
     {% else %}
-    <p class="empty-state">No runs have been recorded yet.</p>
+    <p class="empty-state">No market context pages are available yet.</p>
     {% endif %}
-  </details>
+  </div>
 
-  <details class="panel collapsible-panel">
+  <details class="panel collapsible-panel activity-panel">
     <summary>
       <span>
-        <span class="eyebrow">Activity</span>
-        <strong>Background listing searches</strong>
+        <span class="eyebrow">Listing activity</span>
+        <strong>Recent listing searches</strong>
       </span>
       <span class="internal-link">Show details</span>
     </summary>
@@ -207,17 +178,15 @@
         <tr>
           <th>Search</th>
           <th>Status</th>
-          <th>Result</th>
           <th>Started</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-        {% for job in local_jobs[:10] %}
+        {% for job in local_jobs[:5] %}
         <tr>
           <td>{{ job.id }}</td>
           <td><span class="pill status-{{ job.status }}">{{ job.status }}</span></td>
-          <td>{{ job.return_code if job.return_code is not none else '—' }}</td>
           <td>{{ job.started_at }}</td>
           <td>
             <a class="internal-link" href="{{ url_for('job_detail', job_id=job.id) }}">View progress</a>
@@ -232,31 +201,8 @@
       </tbody>
     </table>
     {% else %}
-    <p class="empty-state">No local background jobs have been launched yet.</p>
+    <p class="empty-state">No listing searches are running right now.</p>
     {% endif %}
   </details>
-
-  <div class="panel">
-    <div class="panel-header">
-      <p class="eyebrow">Markets</p>
-      <h2>Markets analyzed</h2>
-    </div>
-    {% if analyzed_markets %}
-    <div class="card-list compact">
-      {% for market in analyzed_markets %}
-      <a class="info-card clickable" href="{{ url_for('market_context_by_key', market_key=market.market_key) }}">
-        <div class="card-topline">
-          <h3>{{ market.market_name }}</h3>
-          <span class="pill">{{ market.province or '—' }}</span>
-        </div>
-        <p class="meta-line">Market key: {{ market.market_key }}</p>
-        <p class="meta-line">{{ market.saved_searches|length }} linked saved search{{ '' if market.saved_searches|length == 1 else 'es' }}</p>
-      </a>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="empty-state">No market context pages are available yet.</p>
-    {% endif %}
-  </div>
 </section>
 {% endblock %}

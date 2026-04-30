@@ -672,7 +672,7 @@ def test_saved_search_detail_does_not_run_buy_box_analysis_on_page_load(monkeypa
     assert "AI Prompt 1" in body
 
 
-def test_dashboard_renders_local_background_jobs(monkeypatch) -> None:
+def test_dashboard_renders_started_listing_search_status(monkeypatch) -> None:
     monkeypatch.setattr(
         webapp,
         "get_supabase_read_config",
@@ -709,9 +709,9 @@ def test_dashboard_renders_local_background_jobs(monkeypatch) -> None:
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Background job job123" in body
-    assert "Background job history" in body
-    assert "Open local job log" in body
+    assert "Your listing search is running" in body
+    assert "We are fetching matching listings now" in body
+    assert "View progress" in body
 
 
 def test_listing_detail_renders_smart_reserve_reasoning(monkeypatch) -> None:
