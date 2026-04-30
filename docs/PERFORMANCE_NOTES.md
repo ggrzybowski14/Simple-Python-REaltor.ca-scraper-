@@ -45,7 +45,7 @@ Main work on each load:
 - fetch all market reference rows
 - fetch listing overrides/favorites
 - rebuild underwriting rows when analysis has run
-- rebuild buy-box result lookup
+- read persisted buy-box result lookup from the latest saved analysis snapshot
 
 Previous issue:
 
@@ -56,13 +56,21 @@ Previous issue:
 Implemented fix:
 
 - Buy-box AI screen results are persisted in the saved analysis state when the user runs analysis.
-- Normal page navigation renders persisted buy-box results instead of re-running `analyze_active_listings`.
+- Normal analyzer and listing-detail navigation render persisted buy-box results instead of re-running `analyze_active_listings`.
 - Buy-box AI reruns when the user explicitly clicks `Run analysis` / `Rerun analysis` or changes the buy-box prompts. Legacy analysis snapshots without persisted buy-box results should be rerun once.
+- Listing detail shows persisted researched buy-box summaries/sources behind a collapsed `Research trail`, so the richer result does not bloat the default page.
+
+AI rent persistence notes:
+
+- `Run AI` creates an in-process preview only.
+- `Apply AI values` persists accepted listing-level rent suggestions to Supabase and refreshes the saved analysis snapshot.
+- Accepted AI rent reasoning and optional rent-component breakdowns display on listing detail behind a collapsed `Rent reasoning` section.
 
 ## AI Actions
 
 Current research-backed AI calls:
 
+- research-needed buy-box screens through `call_openai_researched_json`
 - `call_openai_rent_suggestions`
 - `call_openai_market_rental_gap_estimate`
 - `call_openai_market_appreciation_gap_estimate`

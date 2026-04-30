@@ -1,6 +1,6 @@
 # Scraper Status And Handoff
 
-Last updated: 2026-04-27
+Last updated: 2026-04-30
 
 This file captures the current scraper behavior, live benchmark results, and the active reliability issue so a new session can continue without reconstructing the conversation history.
 
@@ -13,6 +13,7 @@ This file captures the current scraper behavior, live benchmark results, and the
 - Pagination now waits for visible listing URLs to stabilize on each results page.
 - If a next-page URL changes but cards/page indicator are stale, the scraper reloads the current results URL once and only continues if cards actually update.
 - Detail enrichment runs after summary URL collection. `--detail-concurrency` controls how many detail pages are open in parallel.
+- Current operating baseline is `--detail-concurrency 6` with detail pacing and `--block-detail-assets`.
 - Repeat runs can reuse recently enriched Supabase rows when detail data is already fresh and complete.
 
 ## Proxy Behavior
@@ -80,7 +81,8 @@ Aggressive concurrency tests:
 
 Conclusion from current tests:
 
-- `12 + --block-detail-assets` was the best confirmed setting before challenges appeared.
+- `6 + --block-detail-assets` is the current stable operating baseline.
+- `12 + --block-detail-assets` was the best historical benchmark before challenges appeared, but it is not the current default.
 - `14` and `16` are too aggressive for a single browser/proxy/session.
 - After the aggressive tests, Realtor began serving security-check pages even during a later `12` run, so the current setup needs a cooldown/retest.
 
@@ -104,21 +106,21 @@ The scraper now detects this challenge text and treats it separately from ordina
 
 This avoids continuing to hammer challenged pages and keeps future runs easier to diagnose.
 
-## Recommended Next Retest
+## Current Recommended Run Shape
 
-Do not immediately keep speed-testing the same proxy/session after a challenge. Recommended next pass:
+Use concurrency 6 unless intentionally benchmarking. Do not immediately keep speed-testing the same proxy/session after a challenge.
+
+If benchmarking again:
 
 1. Let the proxy/session cool down.
-2. Start with a smaller validation run, for example `--max-listings 12 --detail-limit 12 --detail-concurrency 4 --block-detail-assets`.
-3. If no challenge appears, test `--detail-concurrency 6`.
-4. Then test `--detail-concurrency 8`.
-5. Only retest `12` after lower concurrency is clean.
+2. Validate at `--detail-concurrency 6`.
+3. Only test `8` or `12` deliberately, and stop immediately if security challenges appear.
 
 Future scaling should probably use multiple browser contexts/proxies with modest per-proxy concurrency rather than pushing one browser/proxy above 12 detail tabs.
 
 ## Commands
 
-Small proxy-backed validation:
+Current proxy-backed baseline:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scraper.py \
@@ -129,7 +131,7 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scraper.py \
   --max-pages 1 \
   --max-listings 12 \
   --detail-limit 12 \
-  --detail-concurrency 4 \
+  --detail-concurrency 6 \
   --detail-pause-min 0.2 \
   --detail-pause-max 0.5 \
   --block-detail-assets \

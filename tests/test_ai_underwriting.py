@@ -148,6 +148,7 @@ def test_rent_ai_prompt_and_schema_support_multi_unit_components(monkeypatch) ->
     assert "multiple rentable units" in prompt
     assert "main_unit plus basement_suite" in prompt
     assert "rent_components must include that unit plus the main unit" in prompt
+    assert "do not treat ensuite bathrooms" in prompt
     assert "rent_components" in suggestion_schema["properties"]
     assert "rent_components" in suggestion_schema["required"]
 

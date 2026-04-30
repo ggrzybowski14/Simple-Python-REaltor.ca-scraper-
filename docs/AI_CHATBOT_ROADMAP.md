@@ -13,13 +13,18 @@ Current AI implementation details:
   - Description-only prompts still use `https://api.openai.com/v1/chat/completions`.
   - Prompts that need market/regulatory/neighborhood context now use one batch `web_search`-enabled Responses API call for the saved-search/listing batch, then apply that shared researched context across listings.
   - Buy-box AI intentionally does not do parcel-specific deep research per listing; exact zoning, school catchment, floodplain, safety nuance, and other address-specific due diligence belong in listing-detail chat.
+  - Results from `Run analysis` are persisted in `saved_searches.search_snapshot.latest_listing_analysis.buy_box_results_by_listing_id`.
+  - Listing detail pages now read those saved buy-box results and show researched summaries/source URLs behind a collapsible `Research trail`.
 
 - Listing rent suggestions in `ai_underwriting.py`
   - Function: `call_openai_rent_suggestions`
   - Input: saved-search context, official/market baseline when available, listing details.
-  - Output: market research summary, direct comp count, fallback comp count, fallback strategy, source names/URLs, suggested rent, confidence, reasoning, baseline used.
+  - Output: market research summary, direct comp count, fallback comp count, fallback strategy, source names/URLs, suggested rent, confidence, reasoning, baseline used, and optional `rent_components`.
   - Uses one `web_search`-enabled Responses API call for the whole saved search/listing batch, not one web search per listing.
   - Important: the prompt now prioritizes current whole-property comparable rents for the saved-search segment. Official baselines such as CMHC are optional context/fallback, not the primary answer when direct comparable rents are available.
+  - If listing facts clearly indicate multiple rentable units, such as a main house plus detached cottage, basement suite, carriage suite, garden suite, or other rentable unit, the accepted suggestion can include component rents that approximately add to the total.
+  - The prompt explicitly should not treat ensuite bathrooms, guest rooms, dens, or generic bedroom/bathroom counts as rentable suite components unless the listing describes a separate rentable unit or occupancy setup.
+  - `Run AI` only creates an in-process preview. `Apply AI values` persists accepted values/reasoning to Supabase and refreshes the saved listing-analysis snapshot.
 
 - Market rental gap estimates in `ai_underwriting.py`
   - Function: `call_openai_market_rental_gap_estimate`
@@ -81,6 +86,8 @@ For rental/appreciation research responses, prefer a visible research trail:
 - why the fallback is acceptable or weak
 - source URLs/citations
 - confidence and verification steps
+
+For listing rent responses, keep `suggested_rent_monthly` as the total full-listing rent. Use `rent_components` only when there is credible listing evidence for multiple rentable units; otherwise return an empty component list.
 
 ## V1: Listing Detail AI Chat
 

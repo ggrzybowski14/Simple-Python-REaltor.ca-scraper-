@@ -5,11 +5,10 @@
 {% block content %}
 <section class="hero-card">
   <div>
-    <p class="eyebrow">Phase 2 Scaffold</p>
-    <h1>Saved searches, recent runs, and active listings in one local view.</h1>
+    <p class="eyebrow">Canadian real estate</p>
+    <h1>Welcome to your Canadian real estate deal-finding and underwriting assistant.</h1>
     <p class="hero-copy">
-      This first website layer is intentionally thin. It reads from the validated Supabase model and launches the existing
-      scraper in the background rather than reimplementing scraper logic in the UI.
+      Find active listings, review markets, and compare investment opportunities with practical underwriting tools.
     </p>
   </div>
 </section>
@@ -17,8 +16,8 @@
 {% if started_job %}
 <section class="panel">
   <div class="panel-header">
-    <p class="eyebrow">Latest Launch</p>
-    <h2>Background job {{ started_job.id }}</h2>
+    <p class="eyebrow">Finding listings</p>
+    <h2>Your listing search is running</h2>
   </div>
   <p class="meta-line">
     Status: <span class="pill status-{{ started_job.status }}">{{ started_job.status }}</span>
@@ -27,11 +26,12 @@
     {% endif %}
   </p>
   <p class="meta-line">
-    <a class="internal-link" href="{{ url_for('job_detail', job_id=started_job.id) }}">Open local job log</a>
+    We are fetching matching listings now. This can take a few minutes.
+    <a class="internal-link" href="{{ url_for('job_detail', job_id=started_job.id) }}">View progress</a>
   </p>
   {% if started_job.status == 'running' %}
   <form method="post" action="{{ url_for('cancel_job', job_id=started_job.id) }}" class="inline-form">
-    <button type="submit" class="button-secondary">Cancel job</button>
+    <button type="submit" class="button-secondary">Cancel search</button>
   </form>
   {% endif %}
 </section>
@@ -40,8 +40,8 @@
 <section class="content-grid">
   <div class="panel panel-form">
     <div class="panel-header">
-      <p class="eyebrow">Launch Scrape</p>
-      <h2>Start a new scrape</h2>
+      <p class="eyebrow">Listing search</p>
+      <h2>What listings are you interested in finding?</h2>
     </div>
     <form method="post" action="{{ url_for('create_scrape') }}" class="scrape-form">
       <label>
@@ -64,15 +64,15 @@
       <label>
         <span>Minimum price</span>
         <input type="text" name="min_price" inputmode="decimal" placeholder="500000 or 500k">
-        <small class="field-hint">Uses the nearest available Realtor.ca minimum-price option.</small>
+        <small class="field-hint">We will match the closest available price filter.</small>
       </label>
       <label>
         <span>Maximum price</span>
         <input type="text" name="max_price" inputmode="decimal" placeholder="2500000 or 2.5m">
-        <small class="field-hint">Uses the nearest available Realtor.ca maximum-price option; above Realtor.ca's cap uses their highest option.</small>
+        <small class="field-hint">We will match the closest available price filter.</small>
       </label>
       <details class="advanced-box">
-        <summary>Advanced limits</summary>
+        <summary>Advanced search settings</summary>
         <div class="advanced-grid">
           <label>
             <span>Max pages</span>
@@ -104,14 +104,14 @@
           </label>
         </div>
       </details>
-      <button type="submit" class="button-primary">Run headed scrape</button>
+      <button type="submit" class="button-primary">Find listings</button>
     </form>
   </div>
 
   <div class="panel">
     <div class="panel-header">
-      <p class="eyebrow">Saved Searches</p>
-      <h2>Tracked searches</h2>
+      <p class="eyebrow">Previous listing searches</p>
+      <h2>Saved searches</h2>
     </div>
     {% if saved_searches %}
     <div class="card-list dashboard-search-list">
@@ -144,33 +144,36 @@
           <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=search.id) }}">Open search</a>
           <a class="internal-link" href="{{ url_for('market_context_by_key', market_key=search.market_profile.market_key) }}">Market context</a>
           <form method="post" action="{{ url_for('update_saved_search', saved_search_id=search.id) }}" class="inline-form">
-            <button type="submit" class="button-secondary">Update Search</button>
+            <button type="submit" class="button-secondary">Refresh listings</button>
           </form>
         </div>
       </article>
       {% endfor %}
     </div>
     {% else %}
-    <p class="empty-state">No saved searches yet. Run the scraper once from this page to create one.</p>
+    <p class="empty-state">No saved searches yet. Start a listing search to create your first one.</p>
     {% endif %}
   </div>
 </section>
 
 <section class="content-grid lower-grid">
-  <div class="panel">
-    <div class="panel-header">
-      <p class="eyebrow">Recent Runs</p>
-      <h2>Scrape history</h2>
-    </div>
+  <details class="panel collapsible-panel">
+    <summary>
+      <span>
+        <span class="eyebrow">Activity</span>
+        <strong>Recent listing searches</strong>
+      </span>
+      <span class="internal-link">Show details</span>
+    </summary>
     {% if recent_runs %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Run</th>
-          <th>Saved Search</th>
+          <th>Search</th>
+          <th>Saved Search ID</th>
           <th>Status</th>
-          <th>Summary</th>
-          <th>Detail</th>
+          <th>Listings found</th>
+          <th>Details loaded</th>
         </tr>
       </thead>
       <tbody>
@@ -188,20 +191,23 @@
     {% else %}
     <p class="empty-state">No runs have been recorded yet.</p>
     {% endif %}
-  </div>
+  </details>
 
-  <div class="panel">
-    <div class="panel-header">
-      <p class="eyebrow">Local Jobs</p>
-      <h2>Background job history</h2>
-    </div>
+  <details class="panel collapsible-panel">
+    <summary>
+      <span>
+        <span class="eyebrow">Activity</span>
+        <strong>Background listing searches</strong>
+      </span>
+      <span class="internal-link">Show details</span>
+    </summary>
     {% if local_jobs %}
     <table class="data-table">
       <thead>
         <tr>
-          <th>Job</th>
+          <th>Search</th>
           <th>Status</th>
-          <th>Return Code</th>
+          <th>Result</th>
           <th>Started</th>
           <th>Actions</th>
         </tr>
@@ -214,7 +220,7 @@
           <td>{{ job.return_code if job.return_code is not none else '—' }}</td>
           <td>{{ job.started_at }}</td>
           <td>
-            <a class="internal-link" href="{{ url_for('job_detail', job_id=job.id) }}">Open log</a>
+            <a class="internal-link" href="{{ url_for('job_detail', job_id=job.id) }}">View progress</a>
             {% if job.status == 'running' %}
             <form method="post" action="{{ url_for('cancel_job', job_id=job.id) }}" class="inline-form">
               <button type="submit" class="button-secondary">Cancel</button>
@@ -228,7 +234,7 @@
     {% else %}
     <p class="empty-state">No local background jobs have been launched yet.</p>
     {% endif %}
-  </div>
+  </details>
 
   <div class="panel">
     <div class="panel-header">

@@ -29,6 +29,7 @@ The codebase now also has the first real underwriting layer:
 - persisted underwriting defaults at the saved-search level
 - listing-level rent and underwriting assumption overrides
 - persisted latest listing-analysis run snapshot per saved search
+- persisted buy-box AI result snapshots per saved-search analysis run, so normal navigation and listing detail views reuse saved AI results instead of rerunning them
 - CMHC-backed market reference data for rent and vacancy baselines
 - explicit source-mode preservation so `Run analysis` does not silently convert active CMHC, AI, rule-based, or off assumptions back to manual
 - buy-box draft preservation while users work through source-mode buttons before committing with `Run analysis`
@@ -109,12 +110,14 @@ The local website currently provides:
 - listing-analysis results table now uses compact score columns: `Final Score`, `Buy Box Outcome`, and `Underwriting Score`
 - repeated row-level score explanation text has been moved into header info chips; scraped taxes, HOA, and warnings are not shown as table columns
 - cash flow, cap rate, cash-on-cash, and rent-to-price ratio use green / orange / red metric color bands
+- listing-detail pages read persisted buy-box results from `latest_listing_analysis` and show researched buy-box sources behind a collapsible `Research trail`
 - targeted retry of sparse listing details
 - investment analyzer route retained as the listing-analysis URL for underwriting all active listings in a saved search
 - listing-detail underwriting summary and assumptions/source display
 - source-mode controls for rent, vacancy, utilities, and insurance
 - source-mode controls preserve active non-manual modes during `Run analysis`
 - smart per-listing maintenance and CapEx estimate actions
+- accepted AI rent suggestions are persisted and visible on listing detail; when the AI identifies a genuine additional rentable unit, saved results can show main-unit plus suite/cottage rent components behind `Rent reasoning`
 - direct market-context pages for analyzed markets
 - a dashboard-level `Markets analyzed` panel for fast market navigation
 - market-level structured metrics and appreciation scaffolding
@@ -218,7 +221,8 @@ What is already implemented:
 - CMHC market-reference import and match scaffolding
 - AI rent preview inside the `Market Rent Monthly` card
 - `Apply AI values` flow that applies listing-level AI rent suggestions across the underwriting table and refreshes the saved analysis snapshot
-- listing-detail panel showing accepted AI rent reasoning
+- listing-detail panel showing accepted AI rent reasoning and optional main-unit plus suite/cottage component breakdowns
+- listing-detail panel showing saved buy-box results and collapsible research/source details when the run used web-search-backed buy-box AI
 - web-search-backed AI rent/appreciation helpers using the OpenAI Responses API
 - local automated tests for underwriting math, market matching, helper logic, and key routes
 
@@ -571,7 +575,7 @@ Workflow behavior:
 - opening `Analyze Listings` shows setup controls first
 - changing source modes such as manual, CMHC, AI, rule-based utilities/insurance, or smart reserves saves that setting but does not automatically rewrite the visible analysis table
 - pressing `Run analysis` or `Rerun analysis` saves the current buy-box criteria and saved-search defaults together, snapshots the current listing-level overrides, and refreshes the table
-- the latest run snapshot is persisted in `saved_searches.search_snapshot.latest_listing_analysis`; the local in-memory state remains only a fallback for the current process
+- the latest run snapshot is persisted in `saved_searches.search_snapshot.latest_listing_analysis`, including buy-box results by listing ID; the local in-memory state remains only a fallback for the current process
 
 - `Cash Flow`
   monthly rent, monthly expenses, mortgage, monthly cash flow
@@ -707,7 +711,7 @@ Still rough:
 - run-management UX is basic
 - there is no persistent background worker or polished queue
 - active-set churn is still hard to interpret when Realtor result counts fluctuate between runs
-- listing-analysis run snapshots are currently local-process state, not durable database records
+- listing-analysis run snapshots are persisted inside the saved-search `search_snapshot`; this is durable enough for the current prototype, though a normalized run-history table may still be useful later
 
 ### Phase 3: Buy Box And Listing Analysis
 
@@ -721,6 +725,8 @@ Completed:
 - `matched`, `maybe`, and `unmatched` buckets
 - persisted buy-box settings per saved search
 - listing-detail buy-box verdict and reasoning
+- persisted buy-box AI results by listing ID in the latest analysis snapshot
+- collapsible researched buy-box source trail on listing detail pages
 - stricter detached-house filtering in app logic so duplex and townhouse rows are excluded from `house`
 - buy-box controls moved into the listing-analysis workspace
 - combined `Strong`, `Review`, and `Reject` verdicts based on buy-box plus underwriting

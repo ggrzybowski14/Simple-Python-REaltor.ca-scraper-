@@ -4,6 +4,8 @@ This app can deploy as either a Render Python web service or a Docker web servic
 
 The Docker service is preferred for hosted scraping because it runs the scraper's visible Chromium browser inside `Xvfb`, which more closely matches the local headed-browser workflow than headless Chromium.
 
+Current hosted development and testing happens from the `render-deployment` branch. Recent app fixes are pushed there first so Render can redeploy from GitHub.
+
 ## What Goes Where
 
 - Local development secrets stay in `.env.local`.
@@ -29,7 +31,8 @@ For this prototype, the app writes directly to Supabase from the server. Keep `S
 1. Push this repo to GitHub.
 2. In Render, choose `New` -> `Blueprint` if using `render.yaml`, or `New` -> `Web Service` if configuring manually.
 3. Connect the GitHub repo.
-4. Use the `standard` plan first because Playwright/Chromium needs more memory than a tiny web app.
+4. Select the `render-deployment` branch for the active hosted prototype.
+5. Use the `standard` plan first because Playwright/Chromium needs more memory than a tiny web app.
 
 ### Docker Service
 
@@ -86,3 +89,5 @@ WEBSHARE_PROXY_COUNTRY_CODES=CA,US
 - Job logs are written under `artifacts/web_jobs`, which is ephemeral on Render unless a persistent disk is attached.
 - A Render restart or redeploy can interrupt an active scrape job.
 - This is acceptable for the first deployment, but background jobs should later move to a worker/queue.
+- If Render auto-deploy is enabled, pushing to `render-deployment` starts a deploy automatically; otherwise use Manual Deploy in the Render dashboard.
+- Current scraper default in the Flask app is `--detail-concurrency 6` with pacing and detail asset blocking.

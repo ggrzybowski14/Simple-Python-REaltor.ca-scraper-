@@ -18,7 +18,7 @@ Current prototype state:
 - Safe speed pass completed: shorter fixed waits, lower `slow_mo`, and conservative parallel detail scraping
 - Webshare API proxy selection working: each scraper run can randomly select one valid proxy from the Webshare API list, with manual proxy config as fallback
 - Scraper performance pass completed: detail timing metrics, detail pause controls, optional detail asset blocking, and pagination stabilization are in place
-- Current scraper reliability issue: Realtor.ca began serving security-check pages after aggressive `14`/`16` detail-concurrency tests; challenge detection is now implemented and lower-concurrency retesting is needed
+- Current scraper reliability baseline: use `--detail-concurrency 6` with pacing and asset blocking; `12` remains historical benchmark context only after Realtor.ca security checks appeared during aggressive `14`/`16` tests
 - Repeat-run optimization added: recently enriched listings can reuse cached detail from Supabase instead of re-opening every detail page
 - Phase 3 started: structured and AI-assisted buy box with `matched`, `maybe`, and `unmatched` buckets
 - Buy-box persistence working: one saved buy box per saved search, now run from the combined listing-analysis workspace and shown on listing-detail pages
@@ -42,18 +42,21 @@ Current prototype state:
 - Detached-house rental gap documented: CMHC detached and semi-detached BC coverage is still too incomplete or suppressed to present as a reliable single-family baseline yet
 - AI rent source mode working: the `Market Rent Monthly` card can preview AI suggestions and apply them across the active underwriting table
 - AI rent research upgraded: listing rent suggestions, market rental gap estimates, and market appreciation estimates now use OpenAI Responses API with web search and visible source/research-trail fields
+- AI rent accepted-result display upgraded: listing detail pages show saved AI rent reasoning behind a collapsible panel, including main-unit plus suite/cottage rent components when returned
 - Non-rent source modes working: utilities and insurance now support manual plus BC-wide rule-based modes, and utilities can explicitly set landlord-paid utilities to zero
 - Listing-level reserve heuristics working: maintenance and CapEx can apply smart per-listing estimates using age, property type, HOA/strata cues, and update/condition signals from listing descriptions
 - Listing-level underwriting overrides working: listing detail pages can edit the major underwriting assumptions that feed that listing's analysis
 - Favorites working: listings can be hearted from detail/analyzer views and reviewed from a dedicated Favorites page grouped by saved-search location
 - Listing-detail underwriting working: listing pages now show underwriting metrics, assumptions, and source context
-- Listing-detail AI rent reasoning working: accepted AI rent suggestions now show their reasoning on the listing page
+- Listing-detail AI rent reasoning working: accepted AI rent suggestions and component breakdowns now show on the listing page after `Apply AI values`
 - Buy-box AI screens expanded: the listing-analysis workspace supports two separate AI prompt screens plus optional base filters
+- Buy-box AI persistence working: `Run analysis` persists AI buy-box results in the saved-search analysis snapshot; normal analyzer and listing-detail navigation read saved results instead of rerunning AI
+- Buy-box research trail visible: web-search-backed buy-box screens save research summaries/source URLs and listing detail exposes them in a collapsible `Research trail`
 - Listing-analysis results UX simplified: the table now emphasizes `Final Score`, `Buy Box Outcome`, and `Underwriting Score`, uses header info chips for scoring logic, hides low-value scraped taxes/HOA/warnings columns, and color-codes core investment metrics
 - Automated tests in place: pytest coverage now protects underwriting math, market matching, buy-box helpers, and key Flask routes
 - Reliability pass in progress: sparse-detail retry, stricter detached-house filtering, improved pagination collection, and corrected `BC` versus `British Columbia` location matching for Nanaimo-style searches
 - Current active step: build the planned AI chat surfaces for listing detail, market context, and listing analyzer pages
-- Current performance priority: persist buy-box AI analysis results and cache repeated market reference reads so ordinary navigation does not feel like an AI job
+- Current performance priority: cache repeated market reference reads and move longer AI actions toward background jobs so ordinary navigation stays responsive
 
 ## What It Does Today
 
@@ -89,6 +92,8 @@ Current prototype state:
 - Supports CMHC market-reference matching for market rent and vacancy baselines
 - Labels CMHC closest property-type baselines, such as townhouse rows used for house searches, separately from exact market matches
 - Supports web-search-backed AI rent/appreciation estimates with source URLs, direct-comparison counts, fallback-comparison counts, and fallback strategy notes
+- Supports persisted researched buy-box results with collapsible source/research trails on listing detail pages
+- Supports accepted listing-level AI rent suggestions with optional main-unit plus suite/cottage component breakdowns
 - Supports BC-wide rule-based utilities and insurance estimates when manual values are not known
 - Supports separate smart maintenance and smart CapEx per-listing override passes for active listings
 - Includes a local pytest suite for the deterministic underwriting and app logic
@@ -166,7 +171,7 @@ python scraper.py \
   --detail-limit 10 \
   --detail-concurrency 2
 
-# current cautious proxy-backed retest shape after security challenges
+# current proxy-backed baseline after security-challenge testing
 python scraper.py \
   --location Victoria \
   --beds-min 2 \
@@ -175,7 +180,7 @@ python scraper.py \
   --max-pages 1 \
   --max-listings 12 \
   --detail-limit 12 \
-  --detail-concurrency 4 \
+  --detail-concurrency 6 \
   --detail-pause-min 0.2 \
   --detail-pause-max 0.5 \
   --block-detail-assets \
@@ -225,7 +230,7 @@ Important notes:
 - Supabase is required for the persistent saved-search, scrape-history, and listing-analysis workflow.
 - OpenAI configuration is optional. Without it, the core scraper, Supabase flow, and non-AI underwriting still work, but AI buy-box, AI rent, AI appreciation, and future AI chat features are unavailable.
 - Scraper proxy configuration is optional. When `WEBSHARE_API_KEY` is set, the scraper fetches the current Webshare proxy list and randomly selects a valid proxy. If the API lookup fails or returns no valid proxies, it falls back to the manual `SCRAPER_PROXY_*` fields. Playwright logs only the proxy host/port.
-- The latest speed tests triggered Realtor.ca security-check pages after aggressive detail concurrency. Treat `--detail-concurrency 12` as a historical best, not a currently safe default, until lower-concurrency retesting is clean.
+- The latest speed tests triggered Realtor.ca security-check pages after aggressive detail concurrency. Treat `--detail-concurrency 6` as the current stable baseline. Treat `12` as historical benchmark context, not the default.
 
 ### Webshare Residential Proxy Setup
 
@@ -409,7 +414,8 @@ Current website scope:
   - saved-search underwriting defaults
   - local source controls for market rent, vacancy, utilities, and insurance
   - source-mode changes that persist independently without automatically rerunning the visible results table
-  - AI rent preview and `Use AI` flow inside the `Market Rent Monthly` card
+  - AI rent preview and `Apply AI values` flow inside the `Market Rent Monthly` card
+  - accepted AI rent suggestions that persist to Supabase after apply and can include main-unit plus suite/cottage rent components
   - BC-wide rule-based utilities and insurance defaults
   - separate `Apply smart maintenance` and `Apply smart CapEx` actions that write listing-level reserve overrides
   - listing-level rent overrides
@@ -424,7 +430,8 @@ Current website scope:
   - cash-on-cash
   - rent-to-price ratio
   - assumptions and source summary
-  - accepted AI rent reasoning when present
+  - accepted AI rent reasoning and component breakdowns when present, collapsed behind `Rent reasoning`
+  - persisted buy-box research/source details when present, collapsed behind `Research trail`
   - visibility into smart listing-level reserve overrides through `Assumptions Used`
 
 Current website limitations:
