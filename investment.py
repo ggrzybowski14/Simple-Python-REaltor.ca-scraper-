@@ -18,7 +18,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "high",
         "help_text": "Standard investor down payment assumption for V1.",
         "help_url": None,
-        "label": "Down Payment %",
+        "label": "Down Payment",
         "input_step": "0.5",
     },
     "interest_rate_percent": {
@@ -27,7 +27,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "medium",
         "help_text": "Editable financing estimate for this saved search.",
         "help_url": "https://www.ratehub.ca/mortgages",
-        "label": "Interest Rate %",
+        "label": "Interest Rate",
         "input_step": "0.05",
     },
     "amortization_years": {
@@ -36,7 +36,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "high",
         "help_text": "Longer amortization reduces the monthly payment.",
         "help_url": None,
-        "label": "Amortization (Years)",
+        "label": "Amortization",
         "input_step": "1",
     },
     "closing_cost_percent": {
@@ -45,7 +45,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "medium",
         "help_text": "Closing costs are often estimated around 1.5% to 4% of purchase price.",
         "help_url": "https://www.cmhc-schl.gc.ca/professionals/industry-innovation-and-leadership/industry-expertise/resources-for-mortgage-professionals/10-words-to-know-when-buying-home",
-        "label": "Closing Costs %",
+        "label": "Closing Costs",
         "input_step": "0.1",
     },
     "vacancy_percent": {
@@ -54,7 +54,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "medium",
         "help_text": "Editable saved-search vacancy assumption for this market.",
         "help_url": None,
-        "label": "Vacancy %",
+        "label": "Vacancy",
         "input_step": "0.1",
     },
     "maintenance_percent_of_rent": {
@@ -63,7 +63,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "medium",
         "help_text": "Modeled as a percent of rent in V1, not property value.",
         "help_url": None,
-        "label": "Maintenance % Of Rent",
+        "label": "Maintenance Reserve",
         "input_step": "0.1",
     },
     "capex_percent_of_rent": {
@@ -72,7 +72,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "medium",
         "help_text": "Capital reserve modeled as a percent of rent in V1.",
         "help_url": None,
-        "label": "CapEx % Of Rent",
+        "label": "CapEx Reserve",
         "input_step": "0.1",
     },
     "management_percent_of_rent": {
@@ -81,7 +81,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "high",
         "help_text": "Set to 0% for self-management in V1.",
         "help_url": None,
-        "label": "Management % Of Rent",
+        "label": "Property Management",
         "input_step": "0.1",
     },
     "insurance_monthly": {
@@ -90,7 +90,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "low",
         "help_text": "Monthly insurance estimate if known.",
         "help_url": None,
-        "label": "Insurance Monthly",
+        "label": "Insurance",
         "input_step": "1",
     },
     "utilities_monthly": {
@@ -99,7 +99,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "low",
         "help_text": "Only include landlord-paid utilities.",
         "help_url": None,
-        "label": "Utilities Monthly",
+        "label": "Utilities",
         "input_step": "1",
     },
     "other_monthly": {
@@ -108,7 +108,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "low",
         "help_text": "Any recurring monthly cost not covered elsewhere.",
         "help_url": None,
-        "label": "Other Monthly",
+        "label": "Other Costs",
         "input_step": "1",
     },
     "market_rent_monthly": {
@@ -117,7 +117,7 @@ DEFAULT_INVESTMENT_ASSUMPTIONS: dict[str, dict[str, Any]] = {
         "confidence": "low",
         "help_text": "Single rent estimate for this saved search in V1.",
         "help_url": None,
-        "label": "Market Rent Monthly",
+        "label": "Monthly Rent",
         "input_step": "1",
     },
 }

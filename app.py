@@ -13,6 +13,7 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
 from urllib import error, parse, request
+from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, jsonify, redirect, render_template, request as flask_request, url_for
 
@@ -227,6 +228,19 @@ def parse_iso_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def format_display_timestamp(value: str | None, *, timezone_name: str = "America/Vancouver") -> str:
+    parsed = parse_iso_timestamp(value)
+    if parsed is None:
+        return "Never"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+    try:
+        parsed = parsed.astimezone(ZoneInfo(timezone_name))
+    except Exception:
+        parsed = parsed.astimezone(ZoneInfo("UTC"))
+    return parsed.strftime("%b %-d, %Y at %-I:%M %p")
 
 
 def parse_price_amount(value: str | None) -> int | None:
@@ -1233,6 +1247,10 @@ def create_app() -> Flask:
     @app.template_filter("percent1")
     def percent_filter(value: float | None) -> str:
         return format_percent(value, digits=1)
+
+    @app.template_filter("display_time")
+    def display_time_filter(value: str | None) -> str:
+        return format_display_timestamp(value)
 
     @app.context_processor
     def inject_now() -> dict[str, Any]:

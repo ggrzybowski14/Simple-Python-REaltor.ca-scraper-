@@ -107,6 +107,7 @@ Current prototype state:
 For the current scraper/proxy/performance handoff, see [docs/scraper_status.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/scraper_status.md:1).
 For the staged AI chatbot plan, see [docs/AI_CHATBOT_ROADMAP.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/AI_CHATBOT_ROADMAP.md:1).
 For current page-load and AI latency notes, see [docs/PERFORMANCE_NOTES.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/PERFORMANCE_NOTES.md:1).
+For the current UI polish handoff and remaining product-facing cleanup list, see [docs/UI_POLISH_ROADMAP.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/UI_POLISH_ROADMAP.md:1).
 
 ## What It Is Not Yet
 

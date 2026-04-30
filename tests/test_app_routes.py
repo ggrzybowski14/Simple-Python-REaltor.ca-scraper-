@@ -482,8 +482,8 @@ def test_investment_analyzer_route_renders_with_stubbed_dependencies(monkeypatch
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Victoria Houses" in body
-    assert "Listing Analysis" in body
+    assert "Victoria House Analysis" in body
+    assert "Listing analysis" in body
     assert "Ready to run" in body
     assert "Confirm the buy box and saved-search defaults above, then run analysis to fill this table." in body
 
@@ -600,7 +600,7 @@ def test_investment_analyzer_uses_persisted_buy_box_results_on_page_load(monkeyp
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Nanaimo Houses" in body
+    assert "Nanaimo House Analysis" in body
     assert "source 1" in body
 
 
@@ -668,8 +668,8 @@ def test_saved_search_detail_does_not_run_buy_box_analysis_on_page_load(monkeypa
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
-    assert "Nanaimo Houses" in body
-    assert "AI Prompt 1" in body
+    assert "Nanaimo House Search" in body
+    assert "Analyze listings" in body
 
 
 def test_dashboard_renders_started_listing_search_status(monkeypatch) -> None:

@@ -1,89 +1,48 @@
 {% extends "base.html" %}
 
-{% block title %}{{ saved_search.name }} | Real Estate Analyzer{% endblock %}
+{% block title %}{{ saved_search.location|title }} {{ saved_search.property_type|title if saved_search.property_type else 'Property' }} Search | Real Estate Analyzer{% endblock %}
 
 {% block content %}
 <section class="hero-card compact-hero">
   <div>
-    <p class="eyebrow">Saved Search Detail</p>
-    <h1>{{ saved_search.name }}</h1>
+    <p class="eyebrow">Listing search</p>
+    <h1>{{ saved_search.location|title }} {{ saved_search.property_type|title if saved_search.property_type else 'Property' }} Search</h1>
     <p class="hero-copy">
-      Review scraped inventory for this search, then open listing analysis to run the buy box and underwriting together.
+      {% if saved_search.beds_min is not none %}{{ saved_search.beds_min }}+ beds{% else %}Any bedrooms{% endif %}{% if saved_search.max_price %} under ${{ "{:,}".format(saved_search.max_price) }}{% endif %}
     </p>
-    <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="scrape-form saved-search-update-form">
-      <details class="advanced-box">
-        <summary>Scrape limits</summary>
-        <div class="advanced-grid">
-          <label>
-            <span>Max pages</span>
-            <input type="number" name="max_pages" placeholder="Default 10">
-          </label>
-          <label>
-            <span>Max listings</span>
-            <input type="number" name="max_listings" placeholder="Default 100">
-          </label>
-          <label>
-            <span>Detail limit</span>
-            <input type="number" name="detail_limit" placeholder="Default 100">
-          </label>
-          <label>
-            <span>Detail concurrency</span>
-            <input type="number" name="detail_concurrency" placeholder="Default 6">
-          </label>
-          <label>
-            <span>Detail pause min</span>
-            <input type="number" name="detail_pause_min" step="0.05" placeholder="Default 0.2">
-          </label>
-          <label>
-            <span>Detail pause max</span>
-            <input type="number" name="detail_pause_max" step="0.05" placeholder="Default 0.5">
-          </label>
-          <label>
-            <span>Block detail assets</span>
-            <input type="checkbox" name="block_detail_assets" value="1" checked>
-          </label>
-        </div>
-      </details>
-      <button type="submit" class="button-secondary">Update Search</button>
-    </form>
-    <div class="card-actions">
-      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">Market Context</a>
+    <div class="card-actions saved-search-hero-actions">
+      <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">Open market</a>
+      <form method="post" action="{{ url_for('update_saved_search', saved_search_id=saved_search.id) }}" class="inline-form">
+        <button type="submit" class="button-secondary">Refresh listings</button>
+      </form>
       {% if sparse_listing_count %}
       <form method="post" action="{{ url_for('retry_sparse_details', saved_search_id=saved_search.id) }}" class="inline-form">
-        <button type="submit" class="button-secondary">Retry Sparse Details</button>
+        <button type="submit" class="button-secondary">Fill missing listing details</button>
       </form>
       {% endif %}
     </div>
   </div>
-  <div class="hero-metrics">
+  <div class="hero-metrics hero-metrics-search">
     <div class="metric-card">
-      <span class="metric-label">Location</span>
-      <strong>{{ saved_search.location }}</strong>
-    </div>
-    <div class="metric-card">
-      <span class="metric-label">Active Listings</span>
-      <strong>{{ active_listings|length }}</strong>
-    </div>
-    <div class="metric-card">
-      <span class="metric-label">Results Count</span>
+      <span class="metric-label">Listings Available</span>
       <strong>{{ latest_run.results_count if latest_run and latest_run.results_count is not none else '—' }}</strong>
     </div>
     <div class="metric-card">
-      <span class="metric-label">Collected Count</span>
+      <span class="metric-label">Listings Loaded</span>
       <strong>{{ latest_run.summary_count if latest_run and latest_run.summary_count is not none else '—' }}</strong>
     </div>
     <div class="metric-card">
-      <span class="metric-label">Last Scrape</span>
-      <strong>{{ saved_search.last_scraped_at or 'Never' }}</strong>
+      <span class="metric-label">Last Updated</span>
+      <strong>{{ saved_search.last_scraped_at|display_time }}</strong>
     </div>
   </div>
 </section>
 
-<section class="content-grid">
+<section class="content-grid saved-search-main-grid">
   <div class="panel">
     <div class="panel-header">
-      <p class="eyebrow">Scraped Listings</p>
-      <h2>{{ active_listings|length }} listing(s)</h2>
+      <p class="eyebrow">Listings</p>
+      <h2>{{ active_listings|length }} listing{{ '' if active_listings|length == 1 else 's' }} found</h2>
     </div>
     {% if new_listing_count %}
     <p class="meta-line">{{ new_listing_count }} new listing{{ '' if new_listing_count == 1 else 's' }} in the latest update.</p>
@@ -94,7 +53,7 @@
     {% if active_listings %}
     <div class="card-list scroll-column">
       {% for listing in active_listings %}
-      <article class="info-card listing-card">
+      <article class="info-card listing-card {% if listing.primary_photo_url %}listing-card-with-photo{% endif %}">
         {% if listing.primary_photo_url %}
         <a class="listing-thumb-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">
           <img class="listing-thumb" src="{{ listing.primary_photo_url }}" alt="Primary photo for {{ listing.address }}">
@@ -124,7 +83,7 @@
           Baths: {{ listing.bathrooms or 'N/A' }} |
           {{ listing.property_type or listing.building_type or 'Unknown type' }}
         </p>
-        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">View scraped details</a>
+        <a class="internal-link" href="{{ url_for('listing_detail', saved_search_id=saved_search.id, listing_id=listing.listing_id) }}{% if current_query %}?{{ current_query }}{% endif %}">View listing details</a>
       </article>
       {% endfor %}
     </div>
@@ -136,43 +95,13 @@
   <div class="panel">
     <div class="panel-header">
       <p class="eyebrow">Analysis</p>
-      <h2>Run buy box and underwriting together</h2>
+      <h2>Analyze and underwrite listings</h2>
     </div>
     <p class="meta-line">
-      Listing analysis combines description screening, AI buy-box interpretation, rent assumptions, financing,
-      operating expenses, and underwriting metrics in one results table.
+      Compare listing fit, rent assumptions, financing, expenses, and investment metrics in one workspace.
     </p>
-    {% if buy_box.applied %}
-    <div class="buy-box-ai-summary analysis-summary">
-      <p class="eyebrow">Saved Buy Box</p>
-      <p class="meta-line">
-        Max price: {{ ("$" ~ "{:,}".format(buy_box.max_price)) if buy_box.max_price is not none else "Any" }} |
-        Beds: {{ buy_box.beds_min if buy_box.beds_min is not none else "Any" }}+ |
-        Type: {{ buy_box.property_type|title if buy_box.property_type else "Any" }}
-      </p>
-      <p class="meta-line">Keywords: {{ buy_box.required_keywords_raw if buy_box.required_keywords_raw else "None" }}</p>
-      {% if buy_box.ai_screens %}
-      <p class="meta-line">
-        AI screens:
-        {% for screen in buy_box.ai_screens if screen.enabled %}
-        {{ screen.name }}{% if not loop.last %}, {% endif %}
-        {% else %}
-        None saved
-        {% endfor %}
-      </p>
-      {% else %}
-      <p class="meta-line">AI goal: {{ buy_box.ai_goal_raw if buy_box.ai_goal_raw else "None saved" }}</p>
-      {% endif %}
-      {% if buy_box_ai_error %}
-      <p class="ai-error">{{ buy_box_ai_error }}</p>
-      {% endif %}
-    </div>
-    {% endif %}
     <div class="card-actions lower-grid">
-      <a class="button-secondary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Analyze Listings</a>
-      {% if buy_box.applied %}
-      <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear saved buy box</a>
-      {% endif %}
+      <a class="button-primary button-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id) }}">Analyze listings</a>
     </div>
   </div>
 </section>
@@ -180,7 +109,7 @@
 <section class="lower-grid">
   <details class="panel collapsible-panel">
     <summary>
-      <span class="eyebrow">Recent Runs</span>
+      <span class="eyebrow">Recent Updates</span>
       <strong>History for this search</strong>
     </summary>
     {% if scrape_runs %}
@@ -209,7 +138,7 @@
       </tbody>
     </table>
     {% else %}
-    <p class="empty-state">No scrape history recorded yet.</p>
+    <p class="empty-state">No update history recorded yet.</p>
     {% endif %}
   </details>
 </section>

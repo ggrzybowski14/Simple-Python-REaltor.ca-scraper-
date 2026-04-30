@@ -61,6 +61,8 @@ This file should help a new agent answer three questions quickly:
 - what product direction is actively being pursued next
 - which product decisions are already settled and should not be re-litigated by default
 
+For the current customer-facing UI polish handoff and remaining demo-readiness backlog, see [docs/UI_POLISH_ROADMAP.md](/Users/georgia/Projects/simple realtor.ca scraper python/docs/UI_POLISH_ROADMAP.md:1).
+
 ## What Works Today
 
 ### Scraper
@@ -95,15 +97,18 @@ This gives the project:
 The local website currently provides:
 
 - dashboard of tracked searches
+- dashboard language polished into customer-facing listing-search terminology
 - latest-run indicator on the saved search updated most recently
 - background launch of headed scrape jobs
 - saved-search detail page with all active scraped listings
-- saved-search hero metrics for active listings, site results count, and collected count
+- saved-search detail page polished into `Listing search` language with readable last-updated timestamps, compact listing cards, and product-facing actions
 - saved-search detail page now acts as inventory review plus entry point into `Analyze Listings`
 - listing detail page with richer fields and photo gallery
 - collapsible recent-run history
 - persisted buy-box settings per saved search
 - listing-analysis page where buy-box screening and underwriting assumptions run together
+- listing-analysis hero and setup copy now use customer-facing `Analysis`, `Listing preferences`, and `Interest` language
+- listing-analysis assumptions section has been partially compacted and reordered, with financing first, monthly rent second, and operating costs third
 - listing-analysis page now starts in a setup state and only fills the results table after the user presses `Run analysis`
 - unsaved buy-box text fields survive source-mode button redirects until `Run analysis` is pressed
 - latest listing-analysis run persists in the saved-search snapshot and can be restored after a reload or local server restart

@@ -123,6 +123,14 @@ code {
   justify-content: end;
 }
 
+.hero-metrics-search {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hero-metrics-search .metric-card:last-child {
+  grid-column: 1 / -1;
+}
+
 .metric-card {
   border-radius: 20px;
   padding: 1rem 1.1rem;
@@ -160,6 +168,10 @@ code {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
   gap: 1.5rem;
+}
+
+.saved-search-main-grid {
+  align-items: start;
 }
 
 .lower-grid {
@@ -381,12 +393,16 @@ code {
 
 .ai-screen-card {
   display: grid;
-  gap: 0.9rem;
+  gap: 0.65rem;
 }
 
 .ai-screen-card label {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.35rem;
+}
+
+.ai-screen-card textarea {
+  min-height: 4.75rem;
 }
 
 .compact-checkbox {
@@ -497,6 +513,15 @@ textarea {
 
 .search-card-actions a,
 .search-card-actions button {
+  min-width: 9rem;
+}
+
+.saved-search-hero-actions {
+  gap: 0.65rem;
+}
+
+.saved-search-hero-actions a,
+.saved-search-hero-actions button {
   min-width: 9rem;
 }
 
@@ -666,6 +691,20 @@ textarea {
   margin-top: 0.15rem;
 }
 
+.compact-assumption-details {
+  padding-top: 0.1rem;
+}
+
+.compact-assumption-details summary {
+  cursor: pointer;
+  color: var(--green);
+  font-weight: 700;
+}
+
+.compact-assumption-details .meta-line {
+  margin-top: 0.35rem;
+}
+
 .source-mode-status {
   display: grid;
   gap: 0.35rem;
@@ -708,6 +747,41 @@ textarea {
   border-radius: 16px;
   margin-bottom: 0.9rem;
   background: var(--surface-strong);
+}
+
+.listing-card {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.listing-card-with-photo {
+  grid-template-columns: minmax(12rem, 38%) minmax(0, 1fr);
+  gap: 0.85rem 1rem;
+  align-items: start;
+}
+
+.listing-card-with-photo .listing-thumb-link {
+  grid-row: span 6;
+}
+
+.listing-card-with-photo .listing-thumb {
+  height: 11rem;
+  aspect-ratio: auto;
+  margin-bottom: 0;
+}
+
+.listing-card .card-topline h3 {
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.listing-card .price-line {
+  font-size: 1.08rem;
+}
+
+.listing-card .meta-line,
+.listing-card .internal-link {
+  font-size: 0.95rem;
 }
 
 .clickable {
@@ -1086,38 +1160,71 @@ textarea {
 }
 
 .assumptions-section-costs .assumption-meta-display {
-  gap: 0.35rem;
+  display: none;
+}
+
+.assumptions-grid-purchase .assumption-meta-display {
+  display: none;
+}
+
+.assumptions-section-costs .source-mode-grid,
+.assumptions-section-costs .source-mode-grid-two {
+  gap: 0.45rem;
+}
+
+.assumptions-section-costs .source-mode-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.assumptions-section-costs .source-mode-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .assumptions-section-costs .source-mode-card {
-  gap: 0.4rem;
-  padding: 0.65rem;
+  gap: 0.3rem;
+  padding: 0.55rem;
+  border-radius: 14px;
 }
 
 .assumptions-section-costs .source-mode-header {
   gap: 0.35rem;
+  align-items: start;
 }
 
 .assumptions-section-costs .source-mode-header h3 {
-  font-size: 0.92rem;
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
+.assumptions-section-costs .source-mode-card .eyebrow {
+  font-size: 0.66rem;
+  margin-bottom: 0.22rem;
 }
 
 .assumptions-section-costs .source-mode-body {
-  gap: 0.35rem;
+  gap: 0.28rem;
 }
 
 .assumptions-section-costs .source-mode-value strong {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
+}
+
+.assumptions-section-costs .source-mode-value .meta-line,
+.assumptions-section-costs .source-mode-card .meta-line {
+  font-size: 0.82rem;
+  line-height: 1.25;
+  margin-top: 0.2rem;
 }
 
 .assumptions-section-costs input {
-  padding: 0.65rem 0.75rem;
+  padding: 0.52rem 0.6rem;
   border-radius: 12px;
 }
 
 .assumptions-section-costs .mini-button,
 .assumptions-section-costs .button-secondary {
-  padding: 0.55rem 0.85rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.9rem;
 }
 
 .assumption-label-row {
@@ -1448,6 +1555,20 @@ textarea {
 
   .hero-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .listing-card-with-photo {
+    grid-template-columns: 1fr;
+  }
+
+  .listing-card-with-photo .listing-thumb-link {
+    grid-row: auto;
+  }
+
+  .listing-card-with-photo .listing-thumb {
+    height: auto;
+    aspect-ratio: 16 / 9;
+    margin-bottom: 0.5rem;
   }
 
   .assumptions-grid,

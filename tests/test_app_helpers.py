@@ -47,6 +47,14 @@ def test_parse_market_bedroom_filter_accepts_larger_bedroom_options() -> None:
     assert webapp.format_bedroom_option_label(5) == "5+"
 
 
+def test_format_display_timestamp_uses_readable_local_time() -> None:
+    assert (
+        webapp.format_display_timestamp("2026-04-30T03:04:42+00:00")
+        == "Apr 29, 2026 at 8:04 PM"
+    )
+    assert webapp.format_display_timestamp(None) == "Never"
+
+
 def test_build_buy_box_criteria_uses_two_ai_screens_from_form() -> None:
     saved_search = {"search_snapshot": {}}
 

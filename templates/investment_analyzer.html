@@ -1,17 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}{{ saved_search.name }} Listing Analysis | Real Estate Analyzer{% endblock %}
+{% block title %}{{ saved_search.location|title }} {{ saved_search.property_type|title if saved_search.property_type else 'Property' }} Analysis | Real Estate Analyzer{% endblock %}
 
 {% block content %}
 {% macro render_assumption_field(key, field) %}
 {% set is_multi_source = key in ['vacancy_percent', 'maintenance_percent_of_rent', 'capex_percent_of_rent', 'insurance_monthly', 'utilities_monthly'] %}
-<div class="assumption-field {% if is_multi_source %}assumption-field-wide assumption-field-modes{% endif %}">
+<div class="assumption-field {% if is_multi_source %}assumption-field-modes{% endif %}">
   <span class="assumption-label-row">
     <span>{{ field.label }}</span>
-    <span class="info-chip" title="{% if key == 'maintenance_percent_of_rent' %}Shared maintenance reserve percent used when smart listing overrides are not active.{% elif key == 'capex_percent_of_rent' %}Shared CapEx reserve percent used when smart listing overrides are not active.{% else %}{{ field.help_text }}{% endif %}">i</span>
-    {% if field.help_url %}
-    <a class="help-link" href="{{ field.help_url }}" target="_blank" rel="noreferrer">Source</a>
-    {% endif %}
+    <span class="info-chip" title="{% if key == 'vacancy_percent' %}Vacancy is modeled as a percentage of rent reserved for expected empty periods between tenants.{% elif key == 'maintenance_percent_of_rent' %}Shared maintenance reserve percent used when smart listing overrides are not active.{% elif key == 'capex_percent_of_rent' %}Shared CapEx reserve percent used when smart listing overrides are not active.{% else %}{{ field.help_text }}{% endif %}">i</span>
   </span>
   {% if key == 'vacancy_percent' %}
   {% set cmhc_vacancy_value = market_match.market_reference.vacancy_rate_percent if market_match else none %}
@@ -19,8 +16,7 @@
     <section class="source-mode-card {% if field.source == 'manual' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Manual</p>
-          <h3>Set value directly</h3>
+          <h3>Manual: set value directly</h3>
         </div>
         {% if field.source == 'manual' %}
         <span class="pill subtle-pill">Active</span>
@@ -47,8 +43,7 @@
     <section class="source-mode-card {% if 'cmhc' in field.source %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">CMHC</p>
-          <h3>Use market baseline <span class="info-chip" title="{% if market_match %}{{ market_match.notes if market_match.notes else 'Uses the matched CMHC market vacancy baseline for this saved search.' }}{% else %}No CMHC vacancy baseline is available for this saved search.{% endif %}">i</span></h3>
+          <h3>CMHC: use market baseline <span class="info-chip" title="{% if market_match %}{{ market_match.notes if market_match.notes else 'Uses the matched CMHC market vacancy baseline for this saved search.' }}{% else %}No CMHC vacancy baseline is available for this saved search.{% endif %}">i</span></h3>
         </div>
         {% if 'cmhc' in field.source %}
         <span class="pill subtle-pill">Active</span>
@@ -60,7 +55,10 @@
           {% if market_match %}
           <p class="meta-line">{{ market_match.matched_market_name }} · {{ market_match.reference_label or market_match.match_type|title }}</p>
           {% if market_match.notes %}
-          <p class="meta-line">{{ market_match.notes }}</p>
+          <details class="advanced-box compact-assumption-details">
+            <summary>Source notes</summary>
+            <p class="meta-line">{{ market_match.notes }}</p>
+          </details>
           {% endif %}
           {% else %}
           <p class="meta-line">No CMHC data available for this saved search.</p>
@@ -82,8 +80,7 @@
     <section class="source-mode-card {% if field.source == 'manual' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Manual</p>
-          <h3>Set value directly</h3>
+          <h3>Manual: set value directly</h3>
         </div>
         {% if field.source == 'manual' %}
         <span class="pill subtle-pill">Active</span>
@@ -110,8 +107,7 @@
     <section class="source-mode-card {% if field.source == 'off' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Off</p>
-          <h3>Landlord pays none <span class="info-chip" title="Assumes landlord-paid utilities are zero in this underwriting view.">i</span></h3>
+          <h3>Off: landlord pays none <span class="info-chip" title="Assumes landlord-paid utilities are zero in this underwriting view.">i</span></h3>
         </div>
         {% if field.source == 'off' %}
         <span class="pill subtle-pill">Active</span>
@@ -134,8 +130,7 @@
     <section class="source-mode-card {% if field.source == 'rule_based_bc' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">BC Rule-Based</p>
-          <h3>Use province heuristic <span class="info-chip" title="{{ utilities_rule_based_estimate.help_text }}">i</span></h3>
+          <h3>BC rule-based: use province heuristic <span class="info-chip" title="{{ utilities_rule_based_estimate.help_text }}">i</span></h3>
         </div>
         {% if field.source == 'rule_based_bc' %}
         <span class="pill subtle-pill">Active</span>
@@ -160,8 +155,7 @@
     <section class="source-mode-card {% if field.source == 'manual' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Manual</p>
-          <h3>Set value directly</h3>
+          <h3>Manual: set value directly</h3>
         </div>
         {% if field.source == 'manual' %}
         <span class="pill subtle-pill">Active</span>
@@ -188,8 +182,7 @@
     <section class="source-mode-card {% if field.source == 'rule_based_bc' %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">BC Rule-Based</p>
-          <h3>Use province heuristic <span class="info-chip" title="{{ insurance_rule_based_estimate.help_text }}">i</span></h3>
+          <h3>BC rule-based: use province heuristic <span class="info-chip" title="{{ insurance_rule_based_estimate.help_text }}">i</span></h3>
         </div>
         {% if field.source == 'rule_based_bc' %}
         <span class="pill subtle-pill">Active</span>
@@ -214,8 +207,7 @@
     <section class="source-mode-card {% if not smart_maintenance_active %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Shared Value</p>
-          <h3>Use one default</h3>
+          <h3>Shared value: use one default</h3>
         </div>
         {% if not smart_maintenance_active %}
         <span class="pill subtle-pill">Active</span>
@@ -242,8 +234,7 @@
     <section class="source-mode-card {% if smart_maintenance_active %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Smart Estimates</p>
-          <h3>Use listing overrides <span class="info-chip" title="Uses listing-level heuristics from built year, renovation/update signals, condition-risk phrases, and condo-vs-house cues.">i</span></h3>
+          <h3>Smart estimates: use listing overrides <span class="info-chip" title="Uses listing-level heuristics from built year, renovation/update signals, condition-risk phrases, and condo-vs-house cues.">i</span></h3>
         </div>
         {% if smart_maintenance_active %}
         <span class="pill subtle-pill">Active</span>
@@ -272,8 +263,7 @@
     <section class="source-mode-card {% if not smart_capex_active %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Shared Value</p>
-          <h3>Use one default</h3>
+          <h3>Shared value: use one default</h3>
         </div>
         {% if not smart_capex_active %}
         <span class="pill subtle-pill">Active</span>
@@ -300,8 +290,7 @@
     <section class="source-mode-card {% if smart_capex_active %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">Smart Estimates</p>
-          <h3>Use listing overrides <span class="info-chip" title="Uses listing-level heuristics from built year, renovation/update signals, condition-risk phrases, and condo/strata ownership cues.">i</span></h3>
+          <h3>Smart estimates: use listing overrides <span class="info-chip" title="Uses listing-level heuristics from built year, renovation/update signals, condition-risk phrases, and condo/strata ownership cues.">i</span></h3>
         </div>
         {% if smart_capex_active %}
         <span class="pill subtle-pill">Active</span>
@@ -350,32 +339,26 @@
   <a class="internal-link" href="{{ url_for('saved_search_detail', saved_search_id=saved_search.id) }}">Back to saved search</a>
 </div>
 
-<section class="hero-card compact-hero">
+<section class="hero-card">
   <div>
-    <p class="eyebrow">Listing Analysis</p>
-    <h1>{{ saved_search.name }}</h1>
+    <p class="eyebrow">Listing analysis</p>
+    <h1>{{ saved_search.location|title }} {{ saved_search.property_type|title if saved_search.property_type else 'Property' }} Analysis</h1>
     <p class="hero-copy">
-      Run the buy box and underwriting assumptions together against every active scraped listing.
+      {% if saved_search.beds_min is not none %}{{ saved_search.beds_min }}+ beds{% else %}Any bedrooms{% endif %}{% if saved_search.max_price %} under ${{ "{:,}".format(saved_search.max_price) }}{% endif %}
     </p>
     <p class="hero-meta-line">
       {% if not analysis_has_run %}
-      Confirm the setup below, then run analysis to populate the results table.
+      Confirm the setup below, then run analysis to compare the listings.
       {% elif analysis_buy_box.applied %}
       Rows are grouped by final score and buy-box outcome, then sorted by strongest monthly cash flow within each group.
       {% else %}
-      No saved buy box is active, so the table is using underwriting results only.
+      The table is using underwriting results only.
       {% endif %}
     </p>
     <div class="card-actions">
       <a class="button-secondary button-link" href="{{ url_for('market_context', saved_search_id=saved_search.id) }}">
-        Market Context
+        Open market
       </a>
-    </div>
-  </div>
-  <div class="hero-metrics hero-metrics-single">
-    <div class="metric-card">
-      <span class="metric-label">Active Listings</span>
-      <strong>{{ active_listings|length }}</strong>
     </div>
   </div>
 </section>
@@ -385,12 +368,13 @@
 
 <section class="panel panel-form lower-grid">
   <div class="panel-header">
-    <p class="eyebrow">Buy Box</p>
-    <h2>Optional screening criteria</h2>
+    <h2>What are you looking for?</h2>
+    <p class="meta-line">Use filters and interest prompts to guide the listing analysis.</p>
   </div>
-  <details class="advanced-box optional-buy-box" {% if buy_box.max_price or buy_box.beds_min or buy_box.property_type or buy_box.required_keywords_raw %}open{% endif %}>
-    <summary>Base filters</summary>
+  <details class="advanced-box optional-buy-box">
+    <summary>Price and bedroom filters</summary>
     <div class="scrape-form analysis-buy-box-form">
+      <input type="hidden" name="buy_box_keywords" value="">
       <label>
         <span>Max price</span>
         <input type="number" name="buy_box_max_price" min="0" step="1000" value="{{ buy_box.max_price or '' }}">
@@ -408,10 +392,6 @@
           {% endfor %}
         </select>
       </label>
-      <label>
-        <span>Required keywords in description</span>
-        <textarea name="buy_box_keywords" rows="4" placeholder="suite, mortgage helper, carriage house">{{ buy_box.required_keywords_raw }}</textarea>
-      </label>
     </div>
   </details>
 
@@ -421,19 +401,18 @@
     <section class="source-mode-card ai-screen-card {% if screen.enabled %}source-mode-active{% endif %}">
       <div class="source-mode-header">
         <div>
-          <p class="eyebrow">AI Screen {{ screen_index }}</p>
-          <h3>AI Prompt {{ screen_index }}</h3>
+          <h3>What should the analysis look for?</h3>
         </div>
         <label class="checkbox-row compact-checkbox">
           <input type="checkbox" name="buy_box_ai_screen_{{ screen_index }}_enabled" value="1" {% if screen.enabled %}checked{% endif %}>
-          <span>Enabled</span>
+          <span>Use this</span>
         </label>
       </div>
       <label>
-        <span>AI prompt</span>
+        <span>Interest {{ screen_index }} description</span>
         <textarea
           name="buy_box_ai_screen_{{ screen_index }}_goal"
-          rows="5"
+          rows="2"
           placeholder="{% if screen_index == 1 %}Find listings that likely include, or have credible potential for, additional rental suite income. Ignore ensuite bathrooms.{% else %}Find listings with credible subdivision, lot split, rezoning, large-lot, or redevelopment potential.{% endif %}"
         >{{ screen.goal }}</textarea>
       </label>
@@ -442,37 +421,24 @@
   </div>
   <div class="card-actions">
     {% if buy_box.applied %}
-    <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear buy box</a>
+    <a class="internal-link" href="{{ url_for('investment_analyzer', saved_search_id=saved_search.id, clear_buy_box=1) }}">Clear listing preferences</a>
     {% endif %}
   </div>
 </section>
 
 <section class="panel lower-grid">
   <div class="panel-header">
-    <p class="eyebrow">Assumptions</p>
-    <h2>Saved-search defaults</h2>
+    <h2>Analysis assumptions</h2>
   </div>
   {% set purchase_keys = ['down_payment_percent', 'interest_rate_percent', 'amortization_years', 'closing_cost_percent'] %}
-  {% set ongoing_cost_keys = ['vacancy_percent', 'maintenance_percent_of_rent', 'capex_percent_of_rent', 'management_percent_of_rent', 'other_monthly', 'insurance_monthly', 'utilities_monthly'] %}
+  {% set ongoing_cost_keys = ['vacancy_percent', 'management_percent_of_rent', 'maintenance_percent_of_rent', 'capex_percent_of_rent', 'insurance_monthly', 'utilities_monthly', 'other_monthly'] %}
+
     <section class="assumptions-section">
       <div class="assumptions-section-header">
-        <p class="eyebrow">Purchase</p>
-        <h3>Acquisition and financing assumptions</h3>
+        <h3>Financing</h3>
       </div>
       <div class="assumptions-grid assumptions-grid-purchase">
         {% for key in purchase_keys %}
-        {{ render_assumption_field(key, investment_defaults[key]) }}
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="assumptions-section assumptions-section-costs">
-      <div class="assumptions-section-header">
-        <p class="eyebrow">Ongoing Costs</p>
-        <h3>Recurring operating assumptions</h3>
-      </div>
-      <div class="assumptions-grid assumptions-grid-costs">
-        {% for key in ongoing_cost_keys %}
         {{ render_assumption_field(key, investment_defaults[key]) }}
         {% endfor %}
       </div>
@@ -483,22 +449,14 @@
     {% set cmhc_rent_value = cmhc_reference.get('average_rent_monthly') %}
     <section class="assumptions-section">
       <div class="assumptions-section-header">
-        <p class="eyebrow">Income</p>
-        <h3>Rent assumptions</h3>
+        <h3>Monthly rent</h3>
       </div>
       <section class="assumption-field assumption-field-wide assumption-field-modes market-rent-row">
       <div>
         <div>
           <span class="assumption-label-row">
-            <span>{{ rent_field.label }}</span>
-            {% if rent_field.help_url %}
-            <a class="help-link" href="{{ rent_field.help_url }}" target="_blank" rel="noreferrer">Source</a>
-            {% endif %}
+            <span>Monthly Rent</span>
           </span>
-          <div class="assumption-meta-display">
-            <span class="pill subtle-pill">{{ rent_field.source|replace('_', ' ')|title }}</span>
-            <span class="pill subtle-pill">{{ rent_field.confidence|title }} confidence</span>
-          </div>
         </div>
       </div>
 
@@ -506,8 +464,7 @@
         <section class="source-mode-card {% if rent_field.source == 'manual' %}source-mode-active{% endif %}">
           <div class="source-mode-header">
             <div>
-              <p class="eyebrow">Manual</p>
-              <h3>Set value directly</h3>
+              <h3>Manual: set value directly</h3>
             </div>
             {% if rent_field.source == 'manual' %}
             <span class="pill subtle-pill">Active</span>
@@ -534,8 +491,7 @@
         <section class="source-mode-card {% if 'cmhc' in rent_field.source %}source-mode-active{% endif %}">
           <div class="source-mode-header">
             <div>
-              <p class="eyebrow">CMHC</p>
-              <h3>Use market baseline</h3>
+              <h3>CMHC: use market baseline</h3>
             </div>
             {% if 'cmhc' in rent_field.source %}
             <span class="pill subtle-pill">Active</span>
@@ -547,7 +503,10 @@
               {% if market_match %}
               <p class="meta-line">{{ market_match.matched_market_name }} · {{ market_match.reference_label or market_match.match_type|title }}</p>
               {% if market_match.notes %}
-              <p class="meta-line">{{ market_match.notes }}</p>
+              <details class="advanced-box compact-assumption-details">
+                <summary>Source notes</summary>
+                <p class="meta-line">{{ market_match.notes }}</p>
+              </details>
               {% endif %}
               {% else %}
               <p class="meta-line">No CMHC market match is available for this saved search.</p>
@@ -567,16 +526,18 @@
         <section class="source-mode-card {% if 'ai' in rent_field.source %}source-mode-active{% endif %}">
           <div class="source-mode-header">
             <div>
-              <p class="eyebrow">AI</p>
-              <h3>Generate listing values <span class="info-chip" title="Run AI to generate listing-level rent values, then apply them across the underwriting table. Reasoning and confidence are shown on listing detail after acceptance.">i</span></h3>
+              <h3>AI: generate listing values <span class="info-chip" title="Run AI to generate listing-level rent values, then apply them across the underwriting table. Reasoning and confidence are shown on listing detail after acceptance.">i</span></h3>
             </div>
             {% if 'ai' in rent_field.source %}
             <span class="pill subtle-pill">Active</span>
             {% endif %}
           </div>
           <div class="source-mode-body">
+            <details class="advanced-box compact-assumption-details">
+              <summary>How this works</summary>
               <p class="meta-line">Run AI to preview listing-level rent values, then apply them and refresh the underwriting table.</p>
               <p class="meta-line">Reasoning and confidence are shown here and on listing detail after acceptance.</p>
+            </details>
             <div class="toggle-row">
               <button
                 type="submit"
@@ -626,6 +587,18 @@
       </div>
       </section>
     </section>
+
+    <section class="assumptions-section assumptions-section-costs">
+      <div class="assumptions-section-header">
+        <h3>Operating costs</h3>
+      </div>
+      <div class="assumptions-grid assumptions-grid-costs">
+        {% for key in ongoing_cost_keys %}
+        {{ render_assumption_field(key, investment_defaults[key]) }}
+        {% endfor %}
+      </div>
+    </section>
+
     <div class="card-actions">
       <button type="submit" class="button-primary">{{ 'Rerun analysis' if analysis_has_run else 'Run analysis' }}</button>
     </div>
