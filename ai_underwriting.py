@@ -179,9 +179,14 @@ def build_rent_ai_prompt_text() -> str:
         "official market baselines as a floor or broad context. If a listing appears stronger or weaker than the "
         "researched range because of size, age, condition, bedrooms, bathrooms, square footage, suite potential, or "
         "other meaningful details, adjust the rent estimate accordingly.\n\n"
+        "When a listing clearly has multiple rentable units, estimate the total rent for the full listing and include "
+        "a small rent_components breakdown such as main_unit plus basement_suite or carriage_suite. Do not invent a "
+        "suite component when the listing only hints vaguely at potential; use an empty rent_components array unless "
+        "the component is supported by listing facts or clearly labeled low-confidence reasoning.\n\n"
         "For each listing, return:\n"
         "- listing_id\n"
         "- suggested_rent_monthly\n"
+        "- rent_components\n"
         "- confidence\n"
         "- reasoning\n"
         "- baseline_used\n"
@@ -270,6 +275,34 @@ def call_openai_rent_suggestions(prompt_text: str, payload: dict[str, Any]) -> d
                             "type": "string",
                             "enum": ["above_baseline", "near_baseline", "below_baseline"],
                         },
+                        "rent_components": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "component_type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "main_unit",
+                                            "basement_suite",
+                                            "secondary_suite",
+                                            "carriage_suite",
+                                            "other_unit",
+                                        ],
+                                    },
+                                    "estimated_rent_monthly": {"type": "integer"},
+                                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                                    "reasoning": {"type": "string"},
+                                },
+                                "required": [
+                                    "component_type",
+                                    "estimated_rent_monthly",
+                                    "confidence",
+                                    "reasoning",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
                     },
                     "required": [
                         "listing_id",
@@ -278,6 +311,7 @@ def call_openai_rent_suggestions(prompt_text: str, payload: dict[str, Any]) -> d
                         "reasoning",
                         "baseline_used",
                         "adjustment_direction",
+                        "rent_components",
                     ],
                     "additionalProperties": False,
                 },

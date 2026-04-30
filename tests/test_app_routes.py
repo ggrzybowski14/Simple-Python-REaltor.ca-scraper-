@@ -554,6 +554,7 @@ def test_investment_analyzer_uses_persisted_buy_box_results_on_page_load(monkeyp
                                     "name": "AI Prompt 1",
                                     "verdict": "maybe",
                                     "reason": "Needs review.",
+                                    "research_summary": "Shared market context was researched.",
                                     "source_urls": ["https://example.com/source"],
                                 }
                             ],
@@ -796,6 +797,174 @@ def test_listing_detail_renders_smart_reserve_reasoning(monkeypatch) -> None:
     assert "Smart listing estimate based on older property vintage, single-family profile." in body
     assert 'href="https://example.com/listing"' in body
     assert "Save listing underwriting" in body
+
+
+def test_listing_detail_uses_persisted_buy_box_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Victoria Apartments",
+            "location": "Victoria",
+            "property_type": "apartment",
+            "beds_min": 2,
+            "search_snapshot": {
+                "latest_listing_analysis": {
+                    "buy_box": {"applied": True},
+                    "defaults_snapshot": webapp.merge_investment_defaults(
+                        {"market_rent_monthly": {"value": 2400}}
+                    ),
+                    "overrides_by_listing_id": {},
+                    "buy_box_results_by_listing_id": {
+                        "101": {
+                            "bucket": "maybe",
+                            "label": "Maybe",
+                            "reasons": ["AI Prompt 1: maybe - Saved result from prior run."],
+                            "ai_verdict": "maybe",
+                            "ai_screen_results": [],
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_active_listing_detail",
+        lambda config, saved_search_id, listing_id: {
+            "listing_id": listing_id,
+            "address": "123 Example Ave",
+            "price": "$500,000",
+            "bedrooms": 2,
+            "bathrooms": 2,
+            "property_type": "apartment",
+            "building_type": "Apartment",
+            "annual_taxes": "$2,400",
+            "hoa_fees": "$400",
+            "listing_description": "Downtown apartment.",
+            "last_seen_at": "2026-04-22T20:00:00Z",
+            "source_listing_key": "abc123",
+            "url": "https://example.com/listing",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "hydrate_defaults_for_saved_search",
+        lambda config, saved_search: (
+            webapp.merge_investment_defaults({"market_rent_monthly": {"value": 2400}}),
+            None,
+        ),
+    )
+    monkeypatch.setattr(webapp, "fetch_listing_investment_overrides", lambda config, saved_search_id, listing_ids: {})
+    monkeypatch.setattr(
+        webapp,
+        "fetch_latest_ai_underwriting_suggestion",
+        lambda config, saved_search_id, listing_id, suggestion_type: None,
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("listing detail should use the persisted buy-box result")
+
+    monkeypatch.setattr(webapp, "analyze_listing_for_detail", fail_if_called)
+
+    response = webapp.app.test_client().get("/saved-searches/7/listings/101")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Saved result from prior run." in body
+    assert "Maybe" in body
+
+
+def test_listing_detail_shows_persisted_buy_box_research_sources(monkeypatch) -> None:
+    monkeypatch.setattr(
+        webapp,
+        "get_supabase_read_config",
+        lambda: webapp.SupabaseReadConfig(url="https://example.supabase.co", key="test-key"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_saved_search",
+        lambda config, saved_search_id: {
+            "id": saved_search_id,
+            "name": "Victoria Apartments",
+            "location": "Victoria",
+            "property_type": "apartment",
+            "beds_min": 2,
+            "search_snapshot": {
+                "latest_listing_analysis": {
+                    "buy_box": {"applied": True},
+                    "defaults_snapshot": webapp.merge_investment_defaults(
+                        {"market_rent_monthly": {"value": 2400}}
+                    ),
+                    "overrides_by_listing_id": {},
+                    "buy_box_results_by_listing_id": {
+                        "101": {
+                            "bucket": "maybe",
+                            "label": "Maybe",
+                            "reasons": ["AI Prompt 1: maybe - Saved result."],
+                            "ai_verdict": "maybe",
+                            "ai_screen_results": [
+                                {
+                                    "key": "screen_1",
+                                    "name": "AI Prompt 1",
+                                    "verdict": "maybe",
+                                    "reason": "Needs review.",
+                                    "research_summary": "Saanich neighbourhood context was researched.",
+                                    "source_urls": ["https://example.com/source"],
+                                }
+                            ],
+                        }
+                    },
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "fetch_active_listing_detail",
+        lambda config, saved_search_id, listing_id: {
+            "listing_id": listing_id,
+            "address": "304 3133 Tillicum Rd",
+            "price": "$299,900",
+            "bedrooms": 2,
+            "bathrooms": 1,
+            "property_type": "apartment",
+            "building_type": "Apartment",
+            "annual_taxes": "$1,800",
+            "hoa_fees": "$400",
+            "listing_description": "Apartment near parks and transit.",
+            "last_seen_at": "2026-04-28T22:47:34Z",
+            "source_listing_key": "abc123",
+            "url": "https://example.com/listing",
+        },
+    )
+    monkeypatch.setattr(
+        webapp,
+        "hydrate_defaults_for_saved_search",
+        lambda config, saved_search: (
+            webapp.merge_investment_defaults({"market_rent_monthly": {"value": 2400}}),
+            None,
+        ),
+    )
+    monkeypatch.setattr(webapp, "fetch_listing_investment_overrides", lambda config, saved_search_id, listing_ids: {})
+    monkeypatch.setattr(
+        webapp,
+        "fetch_latest_ai_underwriting_suggestion",
+        lambda config, saved_search_id, listing_id, suggestion_type: None,
+    )
+
+    response = webapp.app.test_client().get("/saved-searches/7/listings/101")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Saanich neighbourhood context was researched." in body
+    assert "https://example.com/source" in body
 
 
 def test_listing_detail_underwriting_override_route_persists_values(monkeypatch) -> None:

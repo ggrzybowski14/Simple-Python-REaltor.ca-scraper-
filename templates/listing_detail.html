@@ -58,6 +58,21 @@
       {% if listing_buy_box.reasons %}
       <p class="metric-detail compact-detail">{{ listing_buy_box.reasons|join(' | ') }}</p>
       {% endif %}
+      {% if listing_buy_box.ai_screen_results %}
+        {% for result in listing_buy_box.ai_screen_results %}
+          {% if result.research_summary %}
+          <p class="metric-detail compact-detail">{{ result.name }} research: {{ result.research_summary }}</p>
+          {% endif %}
+          {% if result.source_urls %}
+          <p class="metric-detail compact-detail">
+            Sources:
+            {% for source_url in result.source_urls[:3] %}
+            <a class="internal-link" href="{{ source_url }}" target="_blank" rel="noreferrer">source {{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+          </p>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -173,6 +188,19 @@
     {% if ai_reasoning.reasoning %}
     <div class="description-block lower-grid">
       {{ ai_reasoning.reasoning }}
+    </div>
+    {% endif %}
+    {% if ai_reasoning.rent_components %}
+    <div class="facts-grid lower-grid">
+      {% for component in ai_reasoning.rent_components %}
+      <div class="fact-row fact-row-stacked">
+        <span>{{ component.component_type|replace('_', ' ')|title }}</span>
+        <strong>{{ component.estimated_rent_monthly|currency }}</strong>
+        <div class="table-subline">
+          {{ component.confidence|title if component.confidence else '—' }} confidence{% if component.reasoning %} | {{ component.reasoning }}{% endif %}
+        </div>
+      </div>
+      {% endfor %}
     </div>
     {% endif %}
     <p class="meta-line">Accepted at {{ latest_ai_rent_suggestion.created_at }}</p>

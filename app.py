@@ -1143,6 +1143,12 @@ def normalize_analysis_state_buy_box_results(state: dict[str, Any] | None) -> di
     return normalized
 
 
+def get_saved_listing_buy_box_result(saved_search: dict[str, Any], listing_id: int) -> dict[str, Any] | None:
+    analysis_state = get_saved_listing_analysis_state(saved_search) or LISTING_ANALYSIS_RUNS.get(int(saved_search["id"]))
+    saved_results = normalize_analysis_state_buy_box_results(analysis_state)
+    return normalize_buy_box_bucket(saved_results.get(listing_id))
+
+
 def buy_box_has_enabled_ai(buy_box: dict[str, Any] | None) -> bool:
     screens = (buy_box or {}).get("ai_screens")
     if not isinstance(screens, list):
@@ -2196,7 +2202,11 @@ def create_app() -> Flask:
         if listing is None:
             abort(404)
         buy_box = build_buy_box_criteria(flask_request.args, saved_search)
-        listing_buy_box = analyze_listing_for_detail(listing, buy_box)
+        listing_buy_box = None
+        if not flask_request.args.get("apply_buy_box"):
+            listing_buy_box = get_saved_listing_buy_box_result(saved_search, listing_id)
+        if listing_buy_box is None:
+            listing_buy_box = analyze_listing_for_detail(listing, buy_box)
         investment_defaults, _market_match = hydrate_defaults_for_saved_search(config, saved_search)
         listing_overrides = fetch_listing_investment_overrides(config, saved_search_id, [listing_id]).get(listing_id, {})
         listing["is_favorite"] = bool(listing_overrides.get("favorite"))

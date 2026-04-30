@@ -119,6 +119,38 @@ def test_rent_suggestions_schema_includes_market_research_fields(monkeypatch) ->
     assert result["parsed_response"]["suggestions"] == []
 
 
+def test_rent_ai_prompt_and_schema_support_multi_unit_components(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_researched_json(**kwargs):
+        captured.update(kwargs)
+        return {
+            "raw_response_text": "{}",
+            "parsed_response": {
+                "market_research_summary": "Current market context reviewed.",
+                "direct_comps_found": 3,
+                "fallback_comps_found": 1,
+                "fallback_strategy": "Used suite comps where supported.",
+                "source_names": ["Example"],
+                "source_urls": ["https://example.com"],
+                "suggestions": [],
+            },
+            "model": "gpt-test",
+            "web_sources": [],
+        }
+
+    monkeypatch.setattr(ai_underwriting, "call_openai_researched_json", fake_researched_json)
+
+    ai_underwriting.call_openai_rent_suggestions("prompt", {"listings": []})
+
+    prompt = ai_underwriting.build_rent_ai_prompt_text().lower()
+    suggestion_schema = captured["schema"]["properties"]["suggestions"]["items"]
+    assert "multiple rentable units" in prompt
+    assert "main_unit plus basement_suite" in prompt
+    assert "rent_components" in suggestion_schema["properties"]
+    assert "rent_components" in suggestion_schema["required"]
+
+
 def test_rent_ai_prompt_treats_official_baseline_as_fallback_context() -> None:
     prompt = ai_underwriting.build_rent_ai_prompt_text().lower()
 
