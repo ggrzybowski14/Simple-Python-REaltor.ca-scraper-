@@ -3,11 +3,13 @@ services:
     name: realtor-analyzer
     runtime: python
     plan: standard
-    buildCommand: pip install -r requirements.txt && playwright install chromium
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
+    buildCommand: PLAYWRIGHT_BROWSERS_PATH=0 pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium
+    startCommand: PLAYWRIGHT_BROWSERS_PATH=0 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
     envVars:
       - key: PYTHONDONTWRITEBYTECODE
         value: "1"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       - key: SCRAPER_HEADLESS
         value: "true"
       - key: SUPABASE_URL

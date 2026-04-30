@@ -31,13 +31,13 @@ For this prototype, the app writes directly to Supabase from the server. Keep `S
 5. Confirm the build command:
 
 ```bash
-pip install -r requirements.txt && playwright install chromium
+PLAYWRIGHT_BROWSERS_PATH=0 pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium
 ```
 
 6. Confirm the start command:
 
 ```bash
-gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
+PLAYWRIGHT_BROWSERS_PATH=0 gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
 ```
 
 7. Add the required environment variables:
