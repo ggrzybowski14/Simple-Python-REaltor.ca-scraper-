@@ -31,7 +31,7 @@ For this prototype, the app writes directly to Supabase from the server. Keep `S
 5. Confirm the build command:
 
 ```bash
-pip install -r requirements.txt && playwright install --with-deps chromium
+pip install -r requirements.txt && playwright install chromium
 ```
 
 6. Confirm the start command:
