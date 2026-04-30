@@ -963,6 +963,8 @@ def test_listing_detail_shows_persisted_buy_box_research_sources(monkeypatch) ->
 
     assert response.status_code == 200
     body = response.get_data(as_text=True)
+    assert "Research trail" in body
+    assert "compact-research-trail" in body
     assert "Saanich neighbourhood context was researched." in body
     assert "https://example.com/source" in body
 

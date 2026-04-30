@@ -786,6 +786,21 @@ textarea {
   font-size: 0.95rem;
 }
 
+.compact-research-trail {
+  margin-top: 0.65rem;
+}
+
+.compact-research-trail summary {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.compact-research-item + .compact-research-item {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(124, 100, 72, 0.18);
+}
+
 .recently-updated-label {
   color: var(--accent-deep);
   font-weight: 700;
