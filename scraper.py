@@ -348,10 +348,11 @@ def describe_proxy_config(proxy_config: ProxyConfig) -> str:
 
 
 async def build_context(playwright) -> BrowserContext:
-    logging.info("Launching visible Chromium browser")
+    headless = env_flag_enabled(os.getenv("SCRAPER_HEADLESS"))
+    logging.info("Launching %s Chromium browser", "headless" if headless else "visible")
     proxy_config = get_scraper_proxy_config()
     launch_options: dict[str, Any] = {
-        "headless": False,
+        "headless": headless,
         "slow_mo": 60,
         "args": [
             "--disable-blink-features=AutomationControlled",
