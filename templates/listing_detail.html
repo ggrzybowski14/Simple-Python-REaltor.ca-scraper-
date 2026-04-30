@@ -198,23 +198,28 @@
       <div class="fact-row"><span>Direction</span><strong>{{ ai_reasoning.adjustment_direction|replace('_', ' ')|title if ai_reasoning.adjustment_direction else '—' }}</strong></div>
       <div class="fact-row"><span>Model</span><strong>{{ latest_ai_rent_suggestion.model or '—' }}</strong></div>
     </div>
-    {% if ai_reasoning.reasoning %}
-    <div class="description-block lower-grid">
-      {{ ai_reasoning.reasoning }}
-    </div>
-    {% endif %}
-    {% if ai_reasoning.rent_components %}
-    <div class="facts-grid lower-grid">
-      {% for component in ai_reasoning.rent_components %}
-      <div class="fact-row fact-row-stacked">
-        <span>{{ component.component_type|replace('_', ' ')|title }}</span>
-        <strong>{{ component.estimated_rent_monthly|currency }}</strong>
-        <div class="table-subline">
-          {{ component.confidence|title if component.confidence else '—' }} confidence{% if component.reasoning %} | {{ component.reasoning }}{% endif %}
-        </div>
+    {% if ai_reasoning.reasoning or ai_reasoning.rent_components %}
+    <details class="advanced-box compact-research-trail">
+      <summary>Rent reasoning</summary>
+      {% if ai_reasoning.reasoning %}
+      <div class="description-block lower-grid">
+        {{ ai_reasoning.reasoning }}
       </div>
-      {% endfor %}
-    </div>
+      {% endif %}
+      {% if ai_reasoning.rent_components %}
+      <div class="facts-grid lower-grid">
+        {% for component in ai_reasoning.rent_components %}
+        <div class="fact-row fact-row-stacked">
+          <span>{{ component.component_type|replace('_', ' ')|title }}</span>
+          <strong>{{ component.estimated_rent_monthly|currency }}</strong>
+          <div class="table-subline">
+            {{ component.confidence|title if component.confidence else '—' }} confidence{% if component.reasoning %} | {{ component.reasoning }}{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </details>
     {% endif %}
     <p class="meta-line">Accepted at {{ latest_ai_rent_suggestion.created_at }}</p>
     {% else %}

@@ -865,7 +865,17 @@ def test_listing_detail_uses_persisted_buy_box_result(monkeypatch) -> None:
     monkeypatch.setattr(
         webapp,
         "fetch_latest_ai_underwriting_suggestion",
-        lambda config, saved_search_id, listing_id, suggestion_type: None,
+        lambda config, saved_search_id, listing_id, suggestion_type: {
+            "accepted_value": 2400,
+            "model": "gpt-test",
+            "created_at": "2026-04-30T16:00:00Z",
+            "parsed_suggestion": {
+                "confidence": "medium",
+                "adjustment_direction": "near_baseline",
+                "reasoning": "Comparable apartment rent.",
+                "rent_components": [],
+            },
+        },
     )
 
     def fail_if_called(*args, **kwargs):
@@ -879,6 +889,7 @@ def test_listing_detail_uses_persisted_buy_box_result(monkeypatch) -> None:
     body = response.get_data(as_text=True)
     assert "Saved result from prior run." in body
     assert "Maybe" in body
+    assert "Rent reasoning" in body
 
 
 def test_listing_detail_shows_persisted_buy_box_research_sources(monkeypatch) -> None:
